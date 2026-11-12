@@ -1547,7 +1547,38 @@ GLvoid Reshape(int w, int h)
     glViewport(0, 0, w, h);
 }
 
+struct ClientInput {
+    bool forward;
+    bool backward;
+    bool left;
+    bool right;
+    bool boost;
+    bool fire;
+    float yaw;
+    float pitch;
+};
+
+static SOCKET connectedHostSocket = INVALID_SOCKET;
+static ClientInput clientInput{};
+
+static void runClientTick() {
+    // 이번 틱의 조작을 모아 두고, 송신 기능을 붙일 때 이 값을 넘긴다.
+    bool canMoveOrFire = !isTyping;
+    clientInput.forward = canMoveOrFire && keyState['w'];
+    clientInput.backward = canMoveOrFire && keyState['s'];
+    clientInput.left = canMoveOrFire && keyState['a'];
+    clientInput.right = canMoveOrFire && keyState['d'];
+    clientInput.boost = canMoveOrFire && keyState['r'];
+    clientInput.fire = canMoveOrFire && isLeftButtonDown;
+    clientInput.yaw = shipAngle;
+    clientInput.pitch = shipPitch;
+}
+
 void Timer(int value) {
+    if (connectedHostSocket != INVALID_SOCKET) {
+        runClientTick();
+    }
+
     globalTime += 0.5f;
     if (missileFireCounter > 0) {
         missileFireCounter--;
@@ -1603,7 +1634,6 @@ static SOCKET connectToHost(const char* hostIp)
 int main(int argc, char** argv)
 {
     SetConsoleOutputCP(CP_UTF8);
-    static SOCKET hostSocket = INVALID_SOCKET;
     if (argc > 1 && std::strcmp(argv[1], "--host") == 0) {
         if (argc < 3 || argv[2][0] == '-') {
             std::cerr << u8"사용법: team_project.exe --host <호스트 IPv4 주소>" << std::endl;
@@ -1611,11 +1641,11 @@ int main(int argc, char** argv)
         }
 
         const char* hostIp = argv[2];
-        hostSocket = connectToHost(hostIp);
-        if (hostSocket != INVALID_SOCKET) {
+        connectedHostSocket = connectToHost(hostIp);
+        if (connectedHostSocket != INVALID_SOCKET) {
             // 게임을 종료할 때 연결을 닫습니다.
             std::atexit([] {
-                closesocket(hostSocket);
+                closesocket(connectedHostSocket);
                 WSACleanup();
             });
             std::cout << u8"[클라이언트] 호스트에 연결했습니다: " << hostIp << ':' << kDefaultHostPort << std::endl;
