@@ -1,15 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <iostream>
-#include "../network_defaults.h"
-#pragma comment(lib, "Ws2_32.lib")
+#include "connection_check.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h" // 프로젝트 폴더에 stb_image.h 파일이 있어야 합니다.
 
@@ -19,7 +9,6 @@
 #include <vector>
 #include <cmath>
 #include <algorithm>
-#include <cstring>
 
 #include <gl/glew.h>
 #include <gl/freeglut.h>
@@ -1547,38 +1536,7 @@ GLvoid Reshape(int w, int h)
     glViewport(0, 0, w, h);
 }
 
-struct ClientInput {
-    bool forward;
-    bool backward;
-    bool left;
-    bool right;
-    bool boost;
-    bool fire;
-    float yaw;
-    float pitch;
-};
-
-static SOCKET connectedHostSocket = INVALID_SOCKET;
-static ClientInput clientInput{};
-
-static void runClientTick() {
-    // 이번 틱의 조작을 모아 두고, 송신 기능을 붙일 때 이 값을 넘긴다.
-    bool canMoveOrFire = !isTyping;
-    clientInput.forward = canMoveOrFire && keyState['w'];
-    clientInput.backward = canMoveOrFire && keyState['s'];
-    clientInput.left = canMoveOrFire && keyState['a'];
-    clientInput.right = canMoveOrFire && keyState['d'];
-    clientInput.boost = canMoveOrFire && keyState['r'];
-    clientInput.fire = canMoveOrFire && isLeftButtonDown;
-    clientInput.yaw = shipAngle;
-    clientInput.pitch = shipPitch;
-}
-
 void Timer(int value) {
-    if (connectedHostSocket != INVALID_SOCKET) {
-        runClientTick();
-    }
-
     globalTime += 0.5f;
     if (missileFireCounter > 0) {
         missileFireCounter--;
@@ -1597,65 +1555,10 @@ void Timer(int value) {
     glutTimerFunc(16, Timer, 0);
 }
 
-static SOCKET connectToHost(const char* hostIp)
-{
-    sockaddr_in address{};
-    address.sin_family = AF_INET;
-    address.sin_port = htons(kDefaultHostPort);
-    if (inet_pton(AF_INET, hostIp, &address.sin_addr) != 1) {
-        std::cerr << u8"[클라이언트] 올바른 IPv4 주소를 입력하세요." << std::endl;
-        return INVALID_SOCKET;
-    }
-
-    WSADATA data{};
-    const int result = WSAStartup(MAKEWORD(2, 2), &data);
-    if (result != 0) {
-        std::cerr << u8"[클라이언트] Winsock 초기화 실패. 오류 코드: " << result << std::endl;
-        return INVALID_SOCKET;
-    }
-
-    SOCKET hostSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (hostSocket == INVALID_SOCKET) {
-        std::cerr << u8"[클라이언트] 소켓 생성 실패. 오류 코드: " << WSAGetLastError() << std::endl;
-        WSACleanup();
-        return INVALID_SOCKET;
-    }
-
-    if (connect(hostSocket, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == SOCKET_ERROR) {
-        std::cerr << u8"[클라이언트] 호스트 연결 실패. 오류 코드: " << WSAGetLastError() << std::endl;
-        closesocket(hostSocket);
-        WSACleanup();
-        return INVALID_SOCKET;
-    }
-
-    return hostSocket;
-}
-
 int main(int argc, char** argv)
 {
-    SetConsoleOutputCP(CP_UTF8);
-    if (argc > 1 && std::strcmp(argv[1], "--host") == 0) {
-        if (argc < 3 || argv[2][0] == '-') {
-            std::cerr << u8"사용법: team_project.exe --host <호스트 IPv4 주소>" << std::endl;
-            return EXIT_FAILURE;
-        }
-
-        const char* hostIp = argv[2];
-        connectedHostSocket = connectToHost(hostIp);
-        if (connectedHostSocket != INVALID_SOCKET) {
-            // 게임을 종료할 때 연결을 닫습니다.
-            std::atexit([] {
-                closesocket(connectedHostSocket);
-                WSACleanup();
-            });
-            std::cout << u8"[클라이언트] 호스트에 연결했습니다: " << hostIp << ':' << kDefaultHostPort << std::endl;
-        } else {
-            std::cerr << u8"[클라이언트] 오프라인 모드로 실행합니다." << std::endl;
-        }
-
-        std::copy(argv + 3, argv + argc + 1, argv + 1);
-        argc -= 2;
-    }
+    static ConnectionCheck connection;
+    connection.connectTo("127.0.0.1", 50000);
 
     glutInit(&argc, argv);
     int screenWidth = glutGet(GLUT_SCREEN_WIDTH);

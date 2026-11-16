@@ -36,6 +36,9 @@
   <PropertyGroup>
     <OutDir>$(ProjectDir)..\bin\$(Platform)\$(Configuration)\</OutDir>
     <IntDir>$(ProjectDir)..\obj\game_server\$(Platform)\$(Configuration)\</IntDir>
+    <LocalDebuggerCommand>$(TargetPath)</LocalDebuggerCommand>
+    <LocalDebuggerWorkingDirectory>$(TargetDir)</LocalDebuggerWorkingDirectory>
+    <DebuggerFlavor>WindowsLocalDebugger</DebuggerFlavor>
   </PropertyGroup>
   <ItemDefinitionGroup>
     <ClCompile>
@@ -49,10 +52,10 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="server.cpp" />
-  </ItemGroup>
-  <ItemGroup>
-    <ClInclude Include="..\network_frame.h" />
+    <ClCompile Include="server.cpp">
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">true</ExcludedFromBuild>
+      <ExcludedFromBuild Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">true</ExcludedFromBuild>
+    </ClCompile>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
