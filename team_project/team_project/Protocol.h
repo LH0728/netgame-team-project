@@ -55,7 +55,7 @@ namespace Protocol
 
     namespace HeaderOffset
     {
-        constexpr std::size_t VERSION = 0;  // 2바이트
+        constexpr std::size_t VERSION = 0;  // 2바이트  
         constexpr std::size_t TYPE = 2;  // 2바이트
         constexpr std::size_t BODY_LENGTH = 4;  // 4바이트
         constexpr std::size_t SEQUENCE = 8;  // 4바이트
