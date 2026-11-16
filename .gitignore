@@ -1,6 +1,9 @@
 # Visual Studio local state and build output
 .vs/
 *.vcxproj.user
+# Share the default debugger settings for the two team projects.
+!team_project/team_project/team_project.vcxproj.user
+!team_project/game_server/game_server.vcxproj.user
 team_project/bin/
 team_project/obj/
 team_project/.setup/
