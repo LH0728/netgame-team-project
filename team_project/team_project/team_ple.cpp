@@ -1,13 +1,15 @@
-#define _CRT_SECURE_NO_WARNINGS
+ï»¿#define _CRT_SECURE_NO_WARNINGS
 #include "connection_check.h"
+#include "netframe.h"
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h" // ÇÁ·ÎÁ§Æ® Æú´õ¿¡ stb_image.h ÆÄÀÏÀÌ ÀÖ¾î¾ß ÇÕ´Ï´Ù.
+#include "stb_image.h" // í”„ë¡œì íŠ¸ í´ë”ì— stb_image.h íŒŒì¼ì´ ìˆì–´ì•¼ í•©ë‹ˆë‹¤.
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
 #include <vector>
 #include <cmath>
+#include <cstring>
 #include <algorithm>
 
 #include <gl/glew.h>
@@ -19,27 +21,27 @@
 #include <glm/gtc/type_ptr.hpp>
 
 struct PlanetData {
-    std::string name;      // [Ãß°¡] Çà¼º ÀÌ¸§ (¿¹: "earth")
+    std::string name;      // [ì¶”ê°€] í–‰ì„± ì´ë¦„ (ì˜ˆ: "earth")
     float distance;
     float size;
     float orbitSpeed;
-    float selfRotateSpeed; // ÀÚÀü ¼Óµµ
-    float axisTilt;        // [Ãß°¡] ÀÚÀüÃà ±â¿ï±â (µµ ´ÜÀ§)
+    float selfRotateSpeed; // ìì „ ì†ë„
+    float axisTilt;        // [ì¶”ê°€] ìì „ì¶• ê¸°ìš¸ê¸° (ë„ ë‹¨ìœ„)
     GLuint textureID;
 
-    // [Ãß°¡] Çà¼º Ã¼·Â (Æø¹ß ·ÎÁ÷À» À§ÇØ Ãß°¡)
+    // [ì¶”ê°€] í–‰ì„± ì²´ë ¥ (í­ë°œ ë¡œì§ì„ ìœ„í•´ ì¶”ê°€)
     int health;
-    float initialSize; // [Ãß°¡] Å©±â º¯È­¸¦ À§ÇØ ÃÊ±â Å©±â ÀúÀå
+    float initialSize; // [ì¶”ê°€] í¬ê¸° ë³€í™”ë¥¼ ìœ„í•´ ì´ˆê¸° í¬ê¸° ì €ì¥
     bool active;
 
-    std::string realDiameter;   // ½ÇÁ¦ Áö¸§
-    std::string realDay;        // ÀÚÀü ÁÖ±â (1ÀÏ ±æÀÌ)
-    std::string realYear;       // °øÀü ÁÖ±â (1³â ±æÀÌ)
-    std::string planetType;     // Çà¼º Å¸ÀÔ (¾Ï¼®/°¡½ºÇü)
+    std::string realDiameter;   // ì‹¤ì œ ì§€ë¦„
+    std::string realDay;        // ìì „ ì£¼ê¸° (1ì¼ ê¸¸ì´)
+    std::string realYear;       // ê³µì „ ì£¼ê¸° (1ë…„ ê¸¸ì´)
+    std::string planetType;     // í–‰ì„± íƒ€ì… (ì•”ì„/ê°€ìŠ¤í˜•)
 };
 
 bool operator==(const PlanetData& a, const PlanetData& b) {
-    // Çà¼ºÀÇ ÀÌ¸§ÀÌ °°À¸¸é °°Àº Çà¼ºÀ¸·Î °£ÁÖÇÕ´Ï´Ù.
+    // í–‰ì„±ì˜ ì´ë¦„ì´ ê°™ìœ¼ë©´ ê°™ì€ í–‰ì„±ìœ¼ë¡œ ê°„ì£¼í•©ë‹ˆë‹¤.
     return a.name == b.name;
 }
 
@@ -56,8 +58,8 @@ struct AsteroidData {
 struct MissileData {
     glm::vec3 position;
     glm::vec3 velocity;
-    float yaw;   // [º¯°æ] ÁÂ¿ì È¸Àü °¢µµ (±âÁ¸ angle ´ëÃ¼)
-    float pitch; // [Ãß°¡] »óÇÏ È¸Àü °¢µµ
+    float yaw;   // [ë³€ê²½] ì¢Œìš° íšŒì „ ê°ë„ (ê¸°ì¡´ angle ëŒ€ì²´)
+    float pitch; // [ì¶”ê°€] ìƒí•˜ íšŒì „ ê°ë„
     float lifeTime;
     bool active;
 };
@@ -71,23 +73,23 @@ struct Particle {
     float fadeSpeed;
 };
 
-// --- Àü¿ª º¯¼ö ---
+// --- ì „ì—­ ë³€ìˆ˜ ---
 GLint width = 1200, height = 800;
 GLuint shaderProgramID;
 GLuint vertexShader, fragmentShader;
 GLuint modelLoc, viewLoc, projLoc, colorLoc, lightPosLoc, viewPosLoc, isSunLoc;
-GLuint whiteTex; // [Ãß°¡] ºó ÅØ½ºÃ³ (ÇÏ¾á»ö)
+GLuint whiteTex; // [ì¶”ê°€] ë¹ˆ í…ìŠ¤ì²˜ (í•˜ì–€ìƒ‰)
 
 // VAO/VBO
 GLuint sphereVAO, sphereVBO, sphereEBO;
 GLuint asteroidVAO, asteroidVBO;
 GLuint starVAO, starVBO;
-GLuint ringVAO, ringVBO; // ¸µ ¸ğµ¨ µ¥ÀÌÅÍ
-GLuint saturnRingTex;    // ¸µ ÅØ½ºÃ³ ID
+GLuint ringVAO, ringVBO; // ë§ ëª¨ë¸ ë°ì´í„°
+GLuint saturnRingTex;    // ë§ í…ìŠ¤ì²˜ ID
 
 size_t sphereIndexCount = 0;
 
-// ÅØ½ºÃ³ IDµé
+// í…ìŠ¤ì²˜ IDë“¤
 GLuint sunTex, mercuryTex, venusTex, earthTex, moonTex, marsTex, jupiterTex, saturnTex, uranusTex, neptuneTex;
 GLuint backgroundTex;
 
@@ -102,48 +104,48 @@ const float missileSpeed = 2.5f;
 const float missileRange = 5000.0f;
 const float PI = 3.1415926535f;
 
-// ¿ìÁÖ¼±(ÇÃ·¹ÀÌ¾î)
+// ìš°ì£¼ì„ (í”Œë ˆì´ì–´)
 glm::vec3 shipPos(0.0f, 500.0f, 1500.0f);
 float shipAngle = 180.0f;
 float shipPitch = 0.0f;
 bool keyState[256] = { false };
 
-// ¸¶¿ì½º Á¦¾î
+// ë§ˆìš°ìŠ¤ ì œì–´
 float mouseSensitivity = 0.1f;
 float lastMouseX = -1.0f, lastMouseY = -1.0f;
 bool firstMouse = true;
 bool isRightButtonDown = false;
 int cameraMode = 1;
-int targetPlanetIndex = -1; // ÇöÀç ÃßÀû ÁßÀÎ Çà¼ºÀÇ ÀÎµ¦½º
+int targetPlanetIndex = -1; // í˜„ì¬ ì¶”ì  ì¤‘ì¸ í–‰ì„±ì˜ ì¸ë±ìŠ¤
 float mouse_x = 0.0f, mouse_y = 0.0f;
 
 
 float globalTime = 0.0f;
-// [Ãß°¡] ÀÚÀü/°øÀü Á¦¾î º¯¼ö
-bool isRotating = true;  // ÀÚÀü ½ºÀ§Ä¡ (±âº» ÄÑÁü)
-bool isOrbiting = true;  // °øÀü ½ºÀ§Ä¡ (±âº» ÄÑÁü)
-float rotateTime = 0.0f; // ÀÚÀü¿ë ´©Àû ½Ã°£
-float orbitTime = 0.0f;  // °øÀü¿ë ´©Àû ½Ã°£
+// [ì¶”ê°€] ìì „/ê³µì „ ì œì–´ ë³€ìˆ˜
+bool isRotating = true;  // ìì „ ìŠ¤ìœ„ì¹˜ (ê¸°ë³¸ ì¼œì§)
+bool isOrbiting = true;  // ê³µì „ ìŠ¤ìœ„ì¹˜ (ê¸°ë³¸ ì¼œì§)
+float rotateTime = 0.0f; // ìì „ìš© ëˆ„ì  ì‹œê°„
+float orbitTime = 0.0f;  // ê³µì „ìš© ëˆ„ì  ì‹œê°„
 
 
-// [Ãß°¡] ÀÎ°ÔÀÓ °Ë»öÃ¢ °ü·Ã º¯¼ö
-bool isTyping = false;       // ÇöÀç °Ë»öÃ¢ÀÌ ÄÑÁ®ÀÖ´Â°¡?
-std::string inputString = ""; // ÇöÀç ÀÔ·ÂµÈ °Ë»ö¾î
+// [ì¶”ê°€] ì¸ê²Œì„ ê²€ìƒ‰ì°½ ê´€ë ¨ ë³€ìˆ˜
+bool isTyping = false;       // í˜„ì¬ ê²€ìƒ‰ì°½ì´ ì¼œì ¸ìˆëŠ”ê°€?
+std::string inputString = ""; // í˜„ì¬ ì…ë ¥ëœ ê²€ìƒ‰ì–´
 bool isGameCleared = false;
 
 const int MISSILE_FIRE_DELAY = 10;
 int missileFireCounter = 0;
 
 
-// --- Àü¿ª º¯¼ö ---
-// ... (±âÁ¸ º¯¼öµé ¾Æ·¡¿¡ Ãß°¡)
+// --- ì „ì—­ ë³€ìˆ˜ ---
+// ... (ê¸°ì¡´ ë³€ìˆ˜ë“¤ ì•„ë˜ì— ì¶”ê°€)
 
-// [Ãß°¡] ÅÂ¾ç Æø¹ß ¿¬Ãâ¿ë º¯¼ö
-bool isSunExploding = false;    // ÅÂ¾çÀÌ Æø¹ß ÁßÀÎ°¡?
-bool isSunDestroyed = false;    // ÅÂ¾çÀÌ ¿ÏÀüÈ÷ »ç¶óÁ³´Â°¡?
-float sunExplosionTimer = 0.0f; // Æø¹ß ÁøÇà ½Ã°£
+// [ì¶”ê°€] íƒœì–‘ í­ë°œ ì—°ì¶œìš© ë³€ìˆ˜
+bool isSunExploding = false;    // íƒœì–‘ì´ í­ë°œ ì¤‘ì¸ê°€?
+bool isSunDestroyed = false;    // íƒœì–‘ì´ ì™„ì „íˆ ì‚¬ë¼ì¡ŒëŠ”ê°€?
+float sunExplosionTimer = 0.0f; // í­ë°œ ì§„í–‰ ì‹œê°„
 
-// --- ÇÔ¼ö ¼±¾ğ ---
+// --- í•¨ìˆ˜ ì„ ì–¸ ---
 char* filetobuf(const char* file);
 void make_vertexShaders();
 void make_fragmentShaders();
@@ -173,7 +175,7 @@ void KeyboardUp(unsigned char key, int x, int y);
 void Timer(int value);
 
 
-// --- ±¸Çö ---
+// --- êµ¬í˜„ ---
 
 char* filetobuf(const char* file) {
     FILE* fptr;
@@ -190,18 +192,18 @@ char* filetobuf(const char* file) {
     buf[length] = 0;
     return buf;
 }
-// [Ãß°¡] ÇÏ¾á»ö 1x1 ÅØ½ºÃ³ »ı¼º ÇÔ¼ö (»ö»óÀÌ ÀÖ´Â ¹°Ã¼¿ë)
+// [ì¶”ê°€] í•˜ì–€ìƒ‰ 1x1 í…ìŠ¤ì²˜ ìƒì„± í•¨ìˆ˜ (ìƒ‰ìƒì´ ìˆëŠ” ë¬¼ì²´ìš©)
 GLuint createWhiteTexture() {
     GLuint textureID;
     glGenTextures(1, &textureID);
     glBindTexture(GL_TEXTURE_2D, textureID);
 
-    // ÇÏ¾á»ö (R:255, G:255, B:255, A:255) ÇÈ¼¿ µ¥ÀÌÅÍ
+    // í•˜ì–€ìƒ‰ (R:255, G:255, B:255, A:255) í”½ì…€ ë°ì´í„°
     unsigned char whiteData[] = { 255, 255, 255, 255 };
 
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, whiteData);
 
-    // ÅØ½ºÃ³ ¼³Á¤
+    // í…ìŠ¤ì²˜ ì„¤ì •
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -209,7 +211,7 @@ GLuint createWhiteTexture() {
 
     return textureID;
 }
-// [Ãß°¡] È­¸é¿¡ ±ÛÀÚ¸¦ ±×¸®´Â ÇÔ¼ö
+// [ì¶”ê°€] í™”ë©´ì— ê¸€ìë¥¼ ê·¸ë¦¬ëŠ” í•¨ìˆ˜
 void renderBitmapString(float x, float y, void* font, const char* string) {
     const char* c;
     glRasterPos2f(x, y);
@@ -218,33 +220,33 @@ void renderBitmapString(float x, float y, void* font, const char* string) {
     }
 }
 
-// [Ãß°¡] °Ë»öÃ¢ UI¸¦ ±×¸®´Â ÇÔ¼ö
+// [ì¶”ê°€] ê²€ìƒ‰ì°½ UIë¥¼ ê·¸ë¦¬ëŠ” í•¨ìˆ˜
 void drawInputBox() {
-    if (!isTyping) return; // ÀÔ·Â ¸ğµå°¡ ¾Æ´Ï¸é ±×¸®Áö ¾ÊÀ½
+    if (!isTyping) return; // ì…ë ¥ ëª¨ë“œê°€ ì•„ë‹ˆë©´ ê·¸ë¦¬ì§€ ì•ŠìŒ
 
-    // 1. 3D ¼³Á¤À» Àá½Ã ²ô°í 2D ¸ğµå·Î ÀüÈ¯
+    // 1. 3D ì„¤ì •ì„ ì ì‹œ ë„ê³  2D ëª¨ë“œë¡œ ì „í™˜
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glLoadIdentity();
-    gluOrtho2D(0, width, 0, height); // È­¸é Å©±â¿¡ ¸Â°Ô 2D ÁÂÇ¥ ¼³Á¤
+    gluOrtho2D(0, width, 0, height); // í™”ë©´ í¬ê¸°ì— ë§ê²Œ 2D ì¢Œí‘œ ì„¤ì •
 
     glMatrixMode(GL_MODELVIEW);
     glPushMatrix();
     glLoadIdentity();
 
-    glDisable(GL_DEPTH_TEST); // UI´Â ¸Ç ¾Õ¿¡ º¸¿©¾ß ÇÏ¹Ç·Î ±íÀÌ °Ë»ç ²û
-    glDisable(GL_LIGHTING);   // UI´Â Á¶¸í ¿µÇâ ¾È ¹ŞÀ½
-    glUseProgram(0);          // ½¦ÀÌ´õ ²ô±â (°íÁ¤ ÆÄÀÌÇÁ¶óÀÎ »ç¿ë)
+    glDisable(GL_DEPTH_TEST); // UIëŠ” ë§¨ ì•ì— ë³´ì—¬ì•¼ í•˜ë¯€ë¡œ ê¹Šì´ ê²€ì‚¬ ë”
+    glDisable(GL_LIGHTING);   // UIëŠ” ì¡°ëª… ì˜í–¥ ì•ˆ ë°›ìŒ
+    glUseProgram(0);          // ì‰ì´ë” ë„ê¸° (ê³ ì • íŒŒì´í”„ë¼ì¸ ì‚¬ìš©)
 
-    // 2. ¹İÅõ¸í °ËÀº»ö ¹Ú½º ±×¸®±â (È­¸é Áß¾Ó)
+    // 2. ë°˜íˆ¬ëª… ê²€ì€ìƒ‰ ë°•ìŠ¤ ê·¸ë¦¬ê¸° (í™”ë©´ ì¤‘ì•™)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-    glColor4f(0.0f, 0.0f, 0.0f, 0.7f); // °ËÀº»ö, Åõ¸íµµ 0.7
+    glColor4f(0.0f, 0.0f, 0.0f, 0.7f); // ê²€ì€ìƒ‰, íˆ¬ëª…ë„ 0.7
     float cx = width / 2.0f;
     float cy = height / 2.0f;
-    float boxW = 300.0f; // ¹Ú½º ³Êºñ Àı¹İ
-    float boxH = 50.0f;  // ¹Ú½º ³ôÀÌ Àı¹İ
+    float boxW = 300.0f; // ë°•ìŠ¤ ë„ˆë¹„ ì ˆë°˜
+    float boxH = 50.0f;  // ë°•ìŠ¤ ë†’ì´ ì ˆë°˜
 
     glBegin(GL_QUADS);
     glVertex2f(cx - boxW, cy - boxH);
@@ -254,18 +256,18 @@ void drawInputBox() {
     glEnd();
     glDisable(GL_BLEND);
 
-    // 3. ÅØ½ºÆ® ±×¸®±â
-    glColor3f(1.0f, 1.0f, 1.0f); // Èò»ö ±ÛÀÚ
+    // 3. í…ìŠ¤íŠ¸ ê·¸ë¦¬ê¸°
+    glColor3f(1.0f, 1.0f, 1.0f); // í°ìƒ‰ ê¸€ì
 
-    // ¾È³» ¹®±¸
+    // ì•ˆë‚´ ë¬¸êµ¬
     std::string title = "Enter Planet Name:";
     renderBitmapString(cx - 50, cy + 15, GLUT_BITMAP_HELVETICA_18, title.c_str());
 
-    // »ç¿ëÀÚ°¡ ÀÔ·Â ÁßÀÎ ±ÛÀÚ (Ä¿¼­ '_' Ãß°¡)
+    // ì‚¬ìš©ìê°€ ì…ë ¥ ì¤‘ì¸ ê¸€ì (ì»¤ì„œ '_' ì¶”ê°€)
     std::string displayStr = inputString + "_";
     renderBitmapString(cx - 30, cy - 15, GLUT_BITMAP_HELVETICA_18, displayStr.c_str());
 
-    // 4. ´Ù½Ã 3D ¼³Á¤À¸·Î º¹±¸
+    // 4. ë‹¤ì‹œ 3D ì„¤ì •ìœ¼ë¡œ ë³µêµ¬
     glEnable(GL_LIGHTING);
     glEnable(GL_DEPTH_TEST);
 
@@ -274,7 +276,7 @@ void drawInputBox() {
     glMatrixMode(GL_MODELVIEW);
     glPopMatrix();
 
-    glUseProgram(shaderProgramID); // ½¦ÀÌ´õ ´Ù½Ã ÄÑ±â
+    glUseProgram(shaderProgramID); // ì‰ì´ë” ë‹¤ì‹œ ì¼œê¸°
 }
 
 GLuint loadTexture(char const* path) {
@@ -302,7 +304,7 @@ GLuint loadTexture(char const* path) {
         stbi_image_free(data);
     }
     else {
-        // ÅØ½ºÃ³ ·Îµå ½ÇÆĞ ½Ã ÄÜ¼Ö¿¡ ¸Ş½ÃÁö Ãâ·Â
+        // í…ìŠ¤ì²˜ ë¡œë“œ ì‹¤íŒ¨ ì‹œ ì½˜ì†”ì— ë©”ì‹œì§€ ì¶œë ¥
         std::cout << "Texture load failed: " << path << std::endl;
         stbi_image_free(data);
     }
@@ -408,21 +410,21 @@ void initAsteroidModel() {
 void initStars() {
     std::vector<float> stars;
     for (int i = 0; i < starCount; ++i) {
-        // 1. À§Ä¡ (x, y, z) - ¹üÀ§¸¦ Á» ³Ğ°Ô ÆÛ¶ß¸²
+        // 1. ìœ„ì¹˜ (x, y, z) - ë²”ìœ„ë¥¼ ì¢€ ë„“ê²Œ í¼ëœ¨ë¦¼
         float x = (rand() % 5000 - 2000) / 5.0f;
         float y = (rand() % 5000 - 2000) / 5.0f;
         float z = (rand() % 5000 - 2000) / 5.0f;
 
         stars.push_back(x); stars.push_back(y); stars.push_back(z);
 
-        // 2. ¹ı¼± (Normal) - ½¦ÀÌ´õ ¿À·ù ¹æÁö¿ë °¡Â¥ µ¥ÀÌÅÍ (0, 1, 0)
+        // 2. ë²•ì„  (Normal) - ì‰ì´ë” ì˜¤ë¥˜ ë°©ì§€ìš© ê°€ì§œ ë°ì´í„° (0, 1, 0)
         stars.push_back(0.0f); stars.push_back(1.0f); stars.push_back(0.0f);
 
-        // 3. ÅØ½ºÃ³ ÁÂÇ¥ (UV) - ½¦ÀÌ´õ ¿À·ù ¹æÁö¿ë °¡Â¥ µ¥ÀÌÅÍ (0, 0)
+        // 3. í…ìŠ¤ì²˜ ì¢Œí‘œ (UV) - ì‰ì´ë” ì˜¤ë¥˜ ë°©ì§€ìš© ê°€ì§œ ë°ì´í„° (0, 0)
         stars.push_back(0.0f); stars.push_back(0.0f);
     }
 
-    // VAO, VBO »ı¼º
+    // VAO, VBO ìƒì„±
     glGenVertexArrays(1, &starVAO);
     glGenBuffers(1, &starVBO);
 
@@ -430,25 +432,25 @@ void initStars() {
     glBindBuffer(GL_ARRAY_BUFFER, starVBO);
     glBufferData(GL_ARRAY_BUFFER, stars.size() * sizeof(float), &stars[0], GL_STATIC_DRAW);
 
-    // ¡Ú ½¦ÀÌ´õ Æ÷¸Ë ¸ÂÃß±â (8°³ÀÇ float°¡ ÇÑ ¼¼Æ®) ¡Ú
+    // â˜… ì‰ì´ë” í¬ë§· ë§ì¶”ê¸° (8ê°œì˜ floatê°€ í•œ ì„¸íŠ¸) â˜…
 
-    // 0¹ø: À§Ä¡ (3°³)
+    // 0ë²ˆ: ìœ„ì¹˜ (3ê°œ)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
 
-    // 1¹ø: ¹ı¼± (3°³) - ÀÌ°Ô ¾øÀ¸¸é ²¨Áü
+    // 1ë²ˆ: ë²•ì„  (3ê°œ) - ì´ê²Œ ì—†ìœ¼ë©´ êº¼ì§
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
     glEnableVertexAttribArray(1);
 
-    // 2¹ø: ÅØ½ºÃ³ (2°³) - ÀÌ°Ô ¾øÀ¸¸é ²¨Áü
+    // 2ë²ˆ: í…ìŠ¤ì²˜ (2ê°œ) - ì´ê²Œ ì—†ìœ¼ë©´ êº¼ì§
     glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
     glEnableVertexAttribArray(2);
 
-    // ¾ÈÀüÇÏ°Ô VAO ¹ÙÀÎµù ÇØÁ¦
+    // ì•ˆì „í•˜ê²Œ VAO ë°”ì¸ë”© í•´ì œ
     glBindVertexArray(0);
 }
 void initPlanetSettings() {
-    // ÅØ½ºÃ³ ·Îµù (±âÁ¸°ú µ¿ÀÏ)
+    // í…ìŠ¤ì²˜ ë¡œë”© (ê¸°ì¡´ê³¼ ë™ì¼)
     sunTex = loadTexture("solar.jpg");
     mercuryTex = loadTexture("mercury.jpg");
     venusTex = loadTexture("venus.jpg");
@@ -464,7 +466,7 @@ void initPlanetSettings() {
 
     planets.clear();
 
-    // Çà¼º Å©±â: Àß º¸ÀÌ°Ô 1.2¹è Á¤µµ (ÅÂ¾ç ´ëºñ ³Ê¹« ÀÛ¾Æ º¸ÀÌÁö ¾Ê°Ô)
+    // í–‰ì„± í¬ê¸°: ì˜ ë³´ì´ê²Œ 1.2ë°° ì •ë„ (íƒœì–‘ ëŒ€ë¹„ ë„ˆë¬´ ì‘ì•„ ë³´ì´ì§€ ì•Šê²Œ)
     float baseScale = 1.2f;
 
     float s_mer = 0.38f * baseScale;
@@ -476,51 +478,51 @@ void initPlanetSettings() {
     float s_ura = 4.01f * baseScale;
     float s_nep = 3.88f * baseScale;
 
-    // ¡Ú¡Ú¡Ú [°Å¸® ´ëÆø ¼öÁ¤] ÅÂ¾ç Å©±â(30)¸¦ °í·ÁÇÏ¿© ¸Ö¸® ¹èÄ¡ ¡Ú¡Ú¡Ú
-    // °Å¸®: 60, 100, 140... ¾¿ ¶ç¿ò
+    // â˜…â˜…â˜… [ê±°ë¦¬ ëŒ€í­ ìˆ˜ì •] íƒœì–‘ í¬ê¸°(30)ë¥¼ ê³ ë ¤í•˜ì—¬ ë©€ë¦¬ ë°°ì¹˜ â˜…â˜…â˜…
+    // ê±°ë¦¬: 60, 100, 140... ì”© ë„ì›€
 
-    // 1. ¼ö¼º (°Å¸® 60)
+    // 1. ìˆ˜ì„± (ê±°ë¦¬ 60)
     planets.push_back({ "mercury", 60.0f, s_mer, 365.0f / 88.0f, 1.0f / 58.65f, 0.03f, mercuryTex, (int)(s_mer * 10.0f), s_mer, true,
         "4,879 km", "58.6 Days", "88 Days", "Terrestrial Planet" });
 
-    // 2. ±İ¼º (°Å¸® 100)
+    // 2. ê¸ˆì„± (ê±°ë¦¬ 100)
     planets.push_back({ "venus", 100.0f, s_ven, 365.0f / 226.0f, 1.0f / -243.01f, 177.3f, venusTex, (int)(s_ven * 10.0f), s_ven, true,
         "12,104 km", "243 Days (Retrograde)", "225 Days", "Terrestrial Planet" });
 
-    // 3. Áö±¸ (°Å¸® 140)
+    // 3. ì§€êµ¬ (ê±°ë¦¬ 140)
     planets.push_back({ "earth", 140.0f, s_ear, 1.0f, 1.0f, 23.5f, earthTex, (int)(s_ear * 10.0f), s_ear, true,
         "12,742 km", "23.9 Hours", "365.25 Days", "Terrestrial Planet" });
 
-    // 4. È­¼º (°Å¸® 180)
+    // 4. í™”ì„± (ê±°ë¦¬ 180)
     planets.push_back({ "mars", 180.0f, s_mar, 365.0f / 686.0f, 1.0f / 1.026f, 25.2f, marsTex, (int)(s_mar * 10.0f), s_mar, true,
         "6,779 km", "24.6 Hours", "687 Days", "Terrestrial Planet" });
 
-    // 5. ¸ñ¼º (°Å¸® 300 - ¿©±â¼­ºÎÅÍ È® ¸Ö¾îÁü)
+    // 5. ëª©ì„± (ê±°ë¦¬ 300 - ì—¬ê¸°ì„œë¶€í„° í™• ë©€ì–´ì§)
     planets.push_back({ "jupiter", 300.0f, s_jup, 365.0f / 4343.5f * 5.0f, 1.0f / 0.41f, 3.1f, jupiterTex, (int)(s_jup * 10.0f), s_jup, true,
         "139,820 km", "9.9 Hours", "11.86 Years", "Gas Giant" });
 
-    // 6. Åä¼º (°Å¸® 450)
+    // 6. í† ì„± (ê±°ë¦¬ 450)
     planets.push_back({ "saturn", 450.0f, s_sat, 365.0f / 10731.0f * 5.0f, 1.0f / 0.426f, 26.7f, saturnTex, (int)(s_sat * 10.0f), s_sat, true,
         "116,460 km", "10.7 Hours", "29.45 Years", "Gas Giant" });
 
-    // 7. Ãµ¿Õ¼º (°Å¸® 600)
+    // 7. ì²œì™•ì„± (ê±°ë¦¬ 600)
     planets.push_back({ "uranus", 600.0f, s_ura, 365.0f / 30587.0f * 10.0f, 1.0f / -0.718f, 97.8f, uranusTex, (int)(s_ura * 10.0f), s_ura, true,
         "50,724 km", "17.2 Hours (Retrograde)", "84 Years", "Ice Giant" });
 
-    // 8. ÇØ¿Õ¼º (°Å¸® 750)
+    // 8. í•´ì™•ì„± (ê±°ë¦¬ 750)
     planets.push_back({ "neptune", 750.0f, s_nep, 365.0f / 59787.0f * 10.0f, 1.0f / 0.67f, 28.3f, neptuneTex, (int)(s_nep * 10.0f), s_nep, true,
         "49,244 km", "16.1 Hours", "164.8 Years", "Ice Giant" });
 }
-// [Ãß°¡] Æ¯Á¤ ÀÎµ¦½º Çà¼ºÀÇ ÇöÀç (x, y, z) À§Ä¡¸¦ °è»êÇÏ¿© ¹İÈ¯ÇÏ´Â ÇÔ¼ö
+// [ì¶”ê°€] íŠ¹ì • ì¸ë±ìŠ¤ í–‰ì„±ì˜ í˜„ì¬ (x, y, z) ìœ„ì¹˜ë¥¼ ê³„ì‚°í•˜ì—¬ ë°˜í™˜í•˜ëŠ” í•¨ìˆ˜
 glm::vec3 getPlanetPosition(int index) {
     if (index < 0 || index >= planets.size()) return glm::vec3(0, 0, 0);
 
-    float angle = orbitTime * planets[index].orbitSpeed; // ÇöÀç °øÀü °¢µµ
-    // Çà¼ºÀº (distance, 0, 0)¿¡¼­ YÃà ±âÁØ È¸ÀüÇÔ
-    // È¸Àü Çà·ÄÀ» Á÷Á¢ °è»êÇÏ°Å³ª »ï°¢ÇÔ¼ö »ç¿ë
-    // glm::rotate´Â ¶óµğ¾È ´ÜÀ§¸¦ ¾¹´Ï´Ù.
+    float angle = orbitTime * planets[index].orbitSpeed; // í˜„ì¬ ê³µì „ ê°ë„
+    // í–‰ì„±ì€ (distance, 0, 0)ì—ì„œ Yì¶• ê¸°ì¤€ íšŒì „í•¨
+    // íšŒì „ í–‰ë ¬ì„ ì§ì ‘ ê³„ì‚°í•˜ê±°ë‚˜ ì‚¼ê°í•¨ìˆ˜ ì‚¬ìš©
+    // glm::rotateëŠ” ë¼ë””ì•ˆ ë‹¨ìœ„ë¥¼ ì”ë‹ˆë‹¤.
 
-    // ´Ü¼øÈ­µÈ °è»ê (yÃà È¸Àü)
+    // ë‹¨ìˆœí™”ëœ ê³„ì‚° (yì¶• íšŒì „)
     float rad = glm::radians(angle);
     float x = cos(rad) * planets[index].distance;
     float z = -sin(rad) * planets[index].distance;
@@ -625,12 +627,12 @@ void updateMovement() {
     }
 }
 
-// [Ãß°¡] Á¶ÁØ¼±(Crosshair) ±×¸®±â ÇÔ¼ö
+// [ì¶”ê°€] ì¡°ì¤€ì„ (Crosshair) ê·¸ë¦¬ê¸° í•¨ìˆ˜
 void drawCrosshair() {
-    // 1ÀÎÄª(1) ¶Ç´Â 3ÀÎÄª(3)ÀÌ ¾Æ´Ò ¶§´Â ±×¸®Áö ¾ÊÀ½
+    // 1ì¸ì¹­(1) ë˜ëŠ” 3ì¸ì¹­(3)ì´ ì•„ë‹ ë•ŒëŠ” ê·¸ë¦¬ì§€ ì•ŠìŒ
     if (cameraMode != 1 && cameraMode != 3) return;
 
-    // 1. 2D ¸ğµå·Î ÀüÈ¯ (UI ±×¸®±â À§ÇÔ)
+    // 1. 2D ëª¨ë“œë¡œ ì „í™˜ (UI ê·¸ë¦¬ê¸° ìœ„í•¨)
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glLoadIdentity();
@@ -640,40 +642,40 @@ void drawCrosshair() {
     glPushMatrix();
     glLoadIdentity();
 
-    // 2. ½¦ÀÌ´õ ¹× 3D ¼³Á¤ ²ô±â
-    glUseProgram(0);          // ½¦ÀÌ´õ ÇØÁ¦
-    glDisable(GL_DEPTH_TEST); // ±íÀÌ Å×½ºÆ® ²ô±â (¸Ç ¾Õ¿¡ º¸ÀÓ)
-    glDisable(GL_LIGHTING);   // Á¶¸í ²ô±â
+    // 2. ì‰ì´ë” ë° 3D ì„¤ì • ë„ê¸°
+    glUseProgram(0);          // ì‰ì´ë” í•´ì œ
+    glDisable(GL_DEPTH_TEST); // ê¹Šì´ í…ŒìŠ¤íŠ¸ ë„ê¸° (ë§¨ ì•ì— ë³´ì„)
+    glDisable(GL_LIGHTING);   // ì¡°ëª… ë„ê¸°
 
-    // 3. Á¶ÁØ¼± ±×¸®±â (³ì»ö ½ÊÀÚ°¡)
-    float cx = width / 2.0f;  // È­¸é Áß½É X
-    float cy = height / 2.0f; // È­¸é Áß½É Y
-    float size = 15.0f;       // ½ÊÀÚ°¡ ±æÀÌ
-    float gap = 5.0f;         // Áß¾Ó ºó °ø°£ (½Ã¾ß È®º¸¿ë)
+    // 3. ì¡°ì¤€ì„  ê·¸ë¦¬ê¸° (ë…¹ìƒ‰ ì‹­ìê°€)
+    float cx = width / 2.0f;  // í™”ë©´ ì¤‘ì‹¬ X
+    float cy = height / 2.0f; // í™”ë©´ ì¤‘ì‹¬ Y
+    float size = 15.0f;       // ì‹­ìê°€ ê¸¸ì´
+    float gap = 5.0f;         // ì¤‘ì•™ ë¹ˆ ê³µê°„ (ì‹œì•¼ í™•ë³´ìš©)
 
-    glLineWidth(2.0f);        // ¼± µÎ²² ¼³Á¤
-    glColor3f(0.0f, 1.0f, 0.0f); // ³ì»ö (Green)
+    glLineWidth(2.0f);        // ì„  ë‘ê»˜ ì„¤ì •
+    glColor3f(0.0f, 1.0f, 0.0f); // ë…¹ìƒ‰ (Green)
 
     glBegin(GL_LINES);
-    // °¡·Î ¼± (ÁÂ¿ì)
+    // ê°€ë¡œ ì„  (ì¢Œìš°)
     glVertex2f(cx - size, cy);
     glVertex2f(cx - gap, cy);
     glVertex2f(cx + gap, cy);
     glVertex2f(cx + size, cy);
 
-    // ¼¼·Î ¼± (»óÇÏ)
+    // ì„¸ë¡œ ì„  (ìƒí•˜)
     glVertex2f(cx, cy - size);
     glVertex2f(cx, cy - gap);
     glVertex2f(cx, cy + gap);
     glVertex2f(cx, cy + size);
     glEnd();
 
-    glLineWidth(1.0f); // ¼± µÎ²² ¿ø»óº¹±¸
+    glLineWidth(1.0f); // ì„  ë‘ê»˜ ì›ìƒë³µêµ¬
 
-    // 4. 3D ¼³Á¤ º¹±¸
+    // 4. 3D ì„¤ì • ë³µêµ¬
     glEnable(GL_LIGHTING);
     glEnable(GL_DEPTH_TEST);
-    glUseProgram(shaderProgramID); // ½¦ÀÌ´õ ´Ù½Ã ÄÑ±â
+    glUseProgram(shaderProgramID); // ì‰ì´ë” ë‹¤ì‹œ ì¼œê¸°
 
     glMatrixMode(GL_PROJECTION);
     glPopMatrix();
@@ -697,11 +699,11 @@ void fireMissile() {
     glm::mat4 view = glm::lookAt(cameraPos, cameraTarget, cameraUp);
     glm::mat4 proj = glm::perspective(glm::radians(45.0f), (float)width / height, 0.1f, 5000.0f);
 
-    // ¡Ú¡Ú¡Ú [¼öÁ¤ 1] Á¶ÁØÁ¡ ÁÂÇ¥ °è»ê (1ÀÎÄªÀº ¹«Á¶°Ç È­¸é Áß¾Ó) ¡Ú¡Ú¡Ú
+    // â˜…â˜…â˜… [ìˆ˜ì • 1] ì¡°ì¤€ì  ì¢Œí‘œ ê³„ì‚° (1ì¸ì¹­ì€ ë¬´ì¡°ê±´ í™”ë©´ ì¤‘ì•™) â˜…â˜…â˜…
     float winX, winY;
     if (cameraMode == 1) {
-        winX = (float)viewport[2] / 2.0f; // È­¸é ³Êºñ Àı¹İ
-        winY = (float)viewport[3] / 2.0f; // È­¸é ³ôÀÌ Àı¹İ
+        winX = (float)viewport[2] / 2.0f; // í™”ë©´ ë„ˆë¹„ ì ˆë°˜
+        winY = (float)viewport[3] / 2.0f; // í™”ë©´ ë†’ì´ ì ˆë°˜
     }
     else {
         winX = mouse_x;
@@ -717,7 +719,7 @@ void fireMissile() {
     bool hit = false;
     float minDist = 10000.0f;
 
-    // (Ãæµ¹ °Ë»ç ·ÎÁ÷Àº ±âÁ¸ À¯Áö)
+    // (ì¶©ëŒ ê²€ì‚¬ ë¡œì§ì€ ê¸°ì¡´ ìœ ì§€)
     for (const auto& a : asteroids) {
         if (a.size <= 0) continue;
         glm::vec3 aPos = a.position + (a.velocity * globalTime);
@@ -734,15 +736,15 @@ void fireMissile() {
 
     if (!hit) targetPos = rayOrigin + rayDir * 5000.0f;
 
-    // ¡Ú¡Ú¡Ú [¼öÁ¤ 2] 3D È¸Àü °¢µµ(Yaw, Pitch) °è»ê ¡Ú¡Ú¡Ú
+    // â˜…â˜…â˜… [ìˆ˜ì • 2] 3D íšŒì „ ê°ë„(Yaw, Pitch) ê³„ì‚° â˜…â˜…â˜…
     MissileData m;
     glm::vec3 fireDir = glm::normalize(targetPos - shipPos);
     m.position = shipPos + fireDir * 2.0f;
     m.velocity = fireDir * missileSpeed;
 
-    // ÁÂ¿ì È¸Àü (YÃà ±âÁØ)
+    // ì¢Œìš° íšŒì „ (Yì¶• ê¸°ì¤€)
     m.yaw = glm::degrees(atan2(fireDir.x, fireDir.z));
-    // »óÇÏ È¸Àü (XÃà ±âÁØ)
+    // ìƒí•˜ íšŒì „ (Xì¶• ê¸°ì¤€)
     m.pitch = glm::degrees(asin(fireDir.y));
 
     m.lifeTime = 0.0f;
@@ -753,24 +755,24 @@ void fireMissile() {
 
 void initRing() {
     std::vector<float> data;
-    const int segments = 72; // ¿øÀ» ¸î Á¶°¢À¸·Î ³ª´­Áö (¸¹À»¼ö·Ï ºÎµå·¯¿ò)
-    float innerRadius = 0.6f; // ¾ÈÂÊ ¹İÁö¸§ (Çà¼ºº¸´Ù ¾à°£ Ä¿¾ß ÇÔ)
-    float outerRadius = 1.2f; // ¹Ù±ùÂÊ ¹İÁö¸§
+    const int segments = 72; // ì›ì„ ëª‡ ì¡°ê°ìœ¼ë¡œ ë‚˜ëˆŒì§€ (ë§ì„ìˆ˜ë¡ ë¶€ë“œëŸ¬ì›€)
+    float innerRadius = 0.6f; // ì•ˆìª½ ë°˜ì§€ë¦„ (í–‰ì„±ë³´ë‹¤ ì•½ê°„ ì»¤ì•¼ í•¨)
+    float outerRadius = 1.2f; // ë°”ê¹¥ìª½ ë°˜ì§€ë¦„
 
     for (int i = 0; i <= segments; ++i) {
         float angle = (float)i / segments * 2.0f * PI;
         float c = cosf(angle);
         float s = sinf(angle);
 
-        // ¾ÈÂÊ Á¡ (Inner) -> ÅØ½ºÃ³ÀÇ ¿ŞÂÊ(0.0)
+        // ì•ˆìª½ ì  (Inner) -> í…ìŠ¤ì²˜ì˜ ì™¼ìª½(0.0)
         data.push_back(c * innerRadius); data.push_back(0.0f); data.push_back(s * innerRadius); // Pos
-        data.push_back(0.0f); data.push_back(1.0f); data.push_back(0.0f);                       // Normal (À§ÂÊ)
-        data.push_back(0.0f); data.push_back(0.0f);                                             // TexCoord (½ÃÀÛ)
+        data.push_back(0.0f); data.push_back(1.0f); data.push_back(0.0f);                       // Normal (ìœ„ìª½)
+        data.push_back(0.0f); data.push_back(0.0f);                                             // TexCoord (ì‹œì‘)
 
-        // ¹Ù±ùÂÊ Á¡ (Outer) -> ÅØ½ºÃ³ÀÇ ¿À¸¥ÂÊ(1.0)
+        // ë°”ê¹¥ìª½ ì  (Outer) -> í…ìŠ¤ì²˜ì˜ ì˜¤ë¥¸ìª½(1.0)
         data.push_back(c * outerRadius); data.push_back(0.0f); data.push_back(s * outerRadius); // Pos
-        data.push_back(0.0f); data.push_back(1.0f); data.push_back(0.0f);                       // Normal (À§ÂÊ)
-        data.push_back(1.0f); data.push_back(0.0f);                                             // TexCoord (³¡)
+        data.push_back(0.0f); data.push_back(1.0f); data.push_back(0.0f);                       // Normal (ìœ„ìª½)
+        data.push_back(1.0f); data.push_back(0.0f);                                             // TexCoord (ë)
     }
 
     glGenVertexArrays(1, &ringVAO);
@@ -780,7 +782,7 @@ void initRing() {
     glBindBuffer(GL_ARRAY_BUFFER, ringVBO);
     glBufferData(GL_ARRAY_BUFFER, data.size() * sizeof(float), &data[0], GL_STATIC_DRAW);
 
-    // ½¦ÀÌ´õ ¼Ó¼º ¿¬°á (Pos, Normal, TexCoord)
+    // ì‰ì´ë” ì†ì„± ì—°ê²° (Pos, Normal, TexCoord)
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
@@ -803,35 +805,35 @@ void updateGameLogic() {
     for (auto& m : missiles) {
         if (!m.active) continue;
         // ----------------------------------------------------
-        // [Ãß°¡] Çà¼º°úÀÇ Ãæµ¹ Ã³¸®
+        // [ì¶”ê°€] í–‰ì„±ê³¼ì˜ ì¶©ëŒ ì²˜ë¦¬
         // ----------------------------------------------------
         for (auto& p : planets) {
-            // ÅÂ¾çÀº Á¦¿Ü (°Å¸® 0.0fÀÎ °æ¿ì)
+            // íƒœì–‘ì€ ì œì™¸ (ê±°ë¦¬ 0.0fì¸ ê²½ìš°)
             if (p.distance == 0.0f) continue;
 
-            // Çà¼ºÀÇ ÇöÀç À§Ä¡ °è»ê (°øÀü À§Ä¡)
+            // í–‰ì„±ì˜ í˜„ì¬ ìœ„ì¹˜ ê³„ì‚° (ê³µì „ ìœ„ì¹˜)
             glm::vec3 currentPlanetPos = getPlanetPosition(std::distance(planets.begin(), std::find(planets.begin(), planets.end(), p)));
 
-            // ¹Ì»çÀÏ°ú Çà¼º Áß½É °£ÀÇ °Å¸®
+            // ë¯¸ì‚¬ì¼ê³¼ í–‰ì„± ì¤‘ì‹¬ ê°„ì˜ ê±°ë¦¬
             float dist = glm::length(m.position - currentPlanetPos);
 
-            // Ãæµ¹ ¹İ°æ ¼³Á¤ (Çà¼º Å©±â + ¹Ì»çÀÏ ¿©À¯ºĞ 0.5f)
+            // ì¶©ëŒ ë°˜ê²½ ì„¤ì • (í–‰ì„± í¬ê¸° + ë¯¸ì‚¬ì¼ ì—¬ìœ ë¶„ 0.5f)
             if (dist < p.size + 0.5f) {
-                m.active = false; // ¹Ì»çÀÏ ºñÈ°¼ºÈ­
-                p.health -= 10;       // Çà¼º Ã¼·Â °¨¼Ò
-                spawnExplosion(m.position, glm::vec3(0.1f, 0.5f, 0.2f), 5); // Ãæµ¹ Æø¹ß È¿°ú (»ö»ó º¯°æ)
+                m.active = false; // ë¯¸ì‚¬ì¼ ë¹„í™œì„±í™”
+                p.health -= 10;       // í–‰ì„± ì²´ë ¥ ê°ì†Œ
+                spawnExplosion(m.position, glm::vec3(0.1f, 0.5f, 0.2f), 5); // ì¶©ëŒ í­ë°œ íš¨ê³¼ (ìƒ‰ìƒ ë³€ê²½)
 
-                // Çà¼º Å©±â °¨¼Ò ¹× ¿ÏÀü ÆÄ±«
+                // í–‰ì„± í¬ê¸° ê°ì†Œ ë° ì™„ì „ íŒŒê´´
                 float initialHealth = p.initialSize * 10.0f;
                 float hpRatio = (float)p.health / initialHealth;
                 if (p.health > 0) {
-                    // Ã¼·Â¿¡ ºñ·ÊÇÏ¿© Å©±â ÁÙÀÌ±â (ÃÖ¼Ò 50%±îÁö)
+                    // ì²´ë ¥ì— ë¹„ë¡€í•˜ì—¬ í¬ê¸° ì¤„ì´ê¸° (ìµœì†Œ 50%ê¹Œì§€)
                     p.size = p.initialSize * (0.5f + 0.5f * hpRatio);
                 }
                 else {
-                    p.size = 0.0f; // ¿ÏÀü ÆÄ±«
+                    p.size = 0.0f; // ì™„ì „ íŒŒê´´
                     p.health = 0;
-                    spawnExplosion(currentPlanetPos, glm::vec3(1.0f, 0.1f, 0.0f), 100); // ´ë±Ô¸ğ Æø¹ß
+                    spawnExplosion(currentPlanetPos, glm::vec3(1.0f, 0.1f, 0.0f), 100); // ëŒ€ê·œëª¨ í­ë°œ
                     printf("Planet %s was destroyed!\n", p.name.c_str());
                 }
                 break;
@@ -859,7 +861,7 @@ void updateGameLogic() {
     asteroids.erase(std::remove_if(asteroids.begin(), asteroids.end(),
         [](const AsteroidData& a) { return a.size <= 0.0f; }), asteroids.end());
 
-    if (!isGameCleared && !isSunDestroyed) { // ¾ÆÁ÷ Å¬¸®¾î ¾È Çß°í ÅÂ¾çµµ »ì¾ÆÀÖ´Ù¸é
+    if (!isGameCleared && !isSunDestroyed) { // ì•„ì§ í´ë¦¬ì–´ ì•ˆ í–ˆê³  íƒœì–‘ë„ ì‚´ì•„ìˆë‹¤ë©´
         int activePlanetCount = 0;
         for (const auto& p : planets) {
             if (p.distance != 0.0f && p.size > 0.001f) {
@@ -867,29 +869,29 @@ void updateGameLogic() {
             }
         }
 
-        // ¸ğµç Çà¼ºÀÌ ÆÄ±«µÇ¾ú°í, ¾ÆÁ÷ Æø¹ßÀÌ ½ÃÀÛµÇÁö ¾Ê¾Ò´Ù¸é -> Æø¹ß ½ÃÀÛ!
+        // ëª¨ë“  í–‰ì„±ì´ íŒŒê´´ë˜ì—ˆê³ , ì•„ì§ í­ë°œì´ ì‹œì‘ë˜ì§€ ì•Šì•˜ë‹¤ë©´ -> í­ë°œ ì‹œì‘!
         if (activePlanetCount == 0 && !isSunExploding) {
             isSunExploding = true;
             printf("WARNING: SUN IS UNSTABLE!\n");
         }
     }
 
-    // [Ãß°¡] ÅÂ¾ç Æø¹ß ¾Ö´Ï¸ŞÀÌ¼Ç ·ÎÁ÷
+    // [ì¶”ê°€] íƒœì–‘ í­ë°œ ì• ë‹ˆë©”ì´ì…˜ ë¡œì§
     if (isSunExploding) {
-        sunExplosionTimer += 0.1f; // Æø¹ß ÁøÇà
+        sunExplosionTimer += 0.1f; // í­ë°œ ì§„í–‰
 
-        // 1. Áö¼ÓÀûÀ¸·Î ÅÂ¾ç À§Ä¡¿¡¼­ ÆÄÆ¼Å¬ »ı¼º (Á¡Á¡ °İ·ÄÇÏ°Ô)
+        // 1. ì§€ì†ì ìœ¼ë¡œ íƒœì–‘ ìœ„ì¹˜ì—ì„œ íŒŒí‹°í´ ìƒì„± (ì ì  ê²©ë ¬í•˜ê²Œ)
         int particleCount = 5 + (int)(sunExplosionTimer * 2.0f);
-        glm::vec3 sunColor = glm::mix(glm::vec3(1.0f, 0.5f, 0.0f), glm::vec3(1.0f, 1.0f, 1.0f), sunExplosionTimer / 10.0f); // ÁÖÈ² -> Èò»ö
+        glm::vec3 sunColor = glm::mix(glm::vec3(1.0f, 0.5f, 0.0f), glm::vec3(1.0f, 1.0f, 1.0f), sunExplosionTimer / 10.0f); // ì£¼í™© -> í°ìƒ‰
         spawnExplosion(glm::vec3(0, 0, 0), sunColor, particleCount);
 
-        // 2. ÀÏÁ¤ ½Ã°£ÀÌ Áö³ª¸é ÅÂ¾ç ¼Ò¸ê ¹× °ÔÀÓ Å¬¸®¾î Ã³¸®
-        if (sunExplosionTimer > 15.0f) { // ¾à 3ÃÊ Á¤µµ ÈÄ (Å¸ÀÌ¸Ó ¼Óµµ¿¡ µû¶ó Á¶Àı)
+        // 2. ì¼ì • ì‹œê°„ì´ ì§€ë‚˜ë©´ íƒœì–‘ ì†Œë©¸ ë° ê²Œì„ í´ë¦¬ì–´ ì²˜ë¦¬
+        if (sunExplosionTimer > 15.0f) { // ì•½ 3ì´ˆ ì •ë„ í›„ (íƒ€ì´ë¨¸ ì†ë„ì— ë”°ë¼ ì¡°ì ˆ)
             isSunExploding = false;
             isSunDestroyed = true;
-            isGameCleared = true; // ÀÌ¶§ ÅØ½ºÆ®°¡ ¶ß°Ô µÊ
+            isGameCleared = true; // ì´ë•Œ í…ìŠ¤íŠ¸ê°€ ëœ¨ê²Œ ë¨
 
-            // ¸¶Áö¸· ´ëÆø¹ß ÀÌÆåÆ®
+            // ë§ˆì§€ë§‰ ëŒ€í­ë°œ ì´í™íŠ¸
             spawnExplosion(glm::vec3(0, 0, 0), glm::vec3(1, 1, 1), 500);
             printf("\n\n*** SUN DESTROYED! UNIVERSE IS DOOMED! ***\n\n");
 
@@ -920,7 +922,7 @@ void drawPlanetInfo() {
 
     PlanetData& p = planets[targetPlanetIndex];
 
-    // 1. 2D ¼³Á¤
+    // 1. 2D ì„¤ì •
     glMatrixMode(GL_PROJECTION);
     glPushMatrix();
     glLoadIdentity();
@@ -934,10 +936,10 @@ void drawPlanetInfo() {
     glDisable(GL_LIGHTING);
     glUseProgram(0);
 
-    // 2. ¹è°æ ¹Ú½º (Á» ´õ Å©°Ô Á¶Á¤)
+    // 2. ë°°ê²½ ë°•ìŠ¤ (ì¢€ ë” í¬ê²Œ ì¡°ì •)
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glColor4f(0.0f, 0.0f, 0.0f, 0.7f); // Á» ´õ ÁøÇÏ°Ô
+    glColor4f(0.0f, 0.0f, 0.0f, 0.7f); // ì¢€ ë” ì§„í•˜ê²Œ
 
     float startX = 20.0f;
     float startY = height - 20.0f;
@@ -952,50 +954,50 @@ void drawPlanetInfo() {
     glEnd();
     glDisable(GL_BLEND);
 
-    // 3. ½ÇÁ¦ µ¥ÀÌÅÍ Ãâ·Â
-    glColor3f(1.0f, 1.0f, 1.0f); // Èò»ö
+    // 3. ì‹¤ì œ ë°ì´í„° ì¶œë ¥
+    glColor3f(1.0f, 1.0f, 1.0f); // í°ìƒ‰
 
     char buffer[256];
     float textX = startX + 15.0f;
     float textY = startY - 30.0f;
     float lineGap = 25.0f;
 
-    // (1) ÀÌ¸§ (´ë¹®ÀÚ °­Á¶)
-    glColor3f(0.3f, 0.8f, 1.0f); // Á¦¸ñÀº ¹àÀº ÇÏ´Ã»ö
+    // (1) ì´ë¦„ (ëŒ€ë¬¸ì ê°•ì¡°)
+    glColor3f(0.3f, 0.8f, 1.0f); // ì œëª©ì€ ë°ì€ í•˜ëŠ˜ìƒ‰
     std::string nameUpper = p.name;
     std::transform(nameUpper.begin(), nameUpper.end(), nameUpper.begin(), ::toupper);
     sprintf(buffer, "=== %s ===", nameUpper.c_str());
     renderBitmapString(textX, textY, GLUT_BITMAP_HELVETICA_18, buffer);
     textY -= (lineGap + 5);
 
-    glColor3f(0.9f, 0.9f, 0.9f); // ³»¿ëÀº ¹àÀº È¸»ö
+    glColor3f(0.9f, 0.9f, 0.9f); // ë‚´ìš©ì€ ë°ì€ íšŒìƒ‰
 
-    // (2) Çà¼º ºĞ·ù
+    // (2) í–‰ì„± ë¶„ë¥˜
     sprintf(buffer, "Type: %s", p.planetType.c_str());
     renderBitmapString(textX, textY, GLUT_BITMAP_HELVETICA_12, buffer);
     textY -= lineGap;
 
-    // (3) ½ÇÁ¦ Áö¸§
+    // (3) ì‹¤ì œ ì§€ë¦„
     sprintf(buffer, "Real Diameter: %s", p.realDiameter.c_str());
     renderBitmapString(textX, textY, GLUT_BITMAP_HELVETICA_18, buffer);
     textY -= lineGap;
 
-    // (4) ÀÚÀü ÁÖ±â (ÇÏ·ç ±æÀÌ)
+    // (4) ìì „ ì£¼ê¸° (í•˜ë£¨ ê¸¸ì´)
     sprintf(buffer, "Day Length: %s", p.realDay.c_str());
     renderBitmapString(textX, textY, GLUT_BITMAP_HELVETICA_18, buffer);
     textY -= lineGap;
 
-    // (5) °øÀü ÁÖ±â (1³â ±æÀÌ)
+    // (5) ê³µì „ ì£¼ê¸° (1ë…„ ê¸¸ì´)
     sprintf(buffer, "Year Length: %s", p.realYear.c_str());
     renderBitmapString(textX, textY, GLUT_BITMAP_HELVETICA_18, buffer);
     textY -= lineGap;
 
-    // (6) ÀÚÀüÃà ±â¿ï±â
+    // (6) ìì „ì¶• ê¸°ìš¸ê¸°
     sprintf(buffer, "Axial Tilt: %.1f deg", p.axisTilt);
     renderBitmapString(textX, textY, GLUT_BITMAP_HELVETICA_18, buffer);
     textY -= (lineGap + 5);
 
-    // (7) ÇöÀç »óÅÂ (HP) - °ÔÀÓ Á¤º¸µµ »ìÂ¦ Ç¥½Ã
+    // (7) í˜„ì¬ ìƒíƒœ (HP) - ê²Œì„ ì •ë³´ë„ ì‚´ì§ í‘œì‹œ
     if (p.health > 50) glColor3f(0.2f, 1.0f, 0.2f);
     else if (p.health > 20) glColor3f(1.0f, 0.8f, 0.2f);
     else glColor3f(1.0f, 0.2f, 0.2f);
@@ -1004,7 +1006,7 @@ void drawPlanetInfo() {
     renderBitmapString(textX, textY, GLUT_BITMAP_HELVETICA_18, buffer);
 
 
-    // 4. º¹±¸
+    // 4. ë³µêµ¬
     glEnable(GL_LIGHTING);
     glEnable(GL_DEPTH_TEST);
     glUseProgram(shaderProgramID);
@@ -1015,8 +1017,8 @@ void drawPlanetInfo() {
 }
 
 void Motion(int x, int y) {
-    // [¼öÁ¤] 1ÀÎÄª ¸ğµå(cameraMode == 1)ÀÏ ¶§¸¸ shouldRotate°¡ true°¡ µÇ¸ç Ä¿¼­ °íÁ¤/¼û±è ·ÎÁ÷ÀÌ ½ÇÇàµË´Ï´Ù.
-    // Âü°í: isTyping Áß¿¡´Â MotionÀÌ È£ÃâµÇÁö ¾Êµµ·Ï Keyboard ÇÔ¼ö¿¡¼­ ¸·°í ÀÖ½À´Ï´Ù.
+    // [ìˆ˜ì •] 1ì¸ì¹­ ëª¨ë“œ(cameraMode == 1)ì¼ ë•Œë§Œ shouldRotateê°€ trueê°€ ë˜ë©° ì»¤ì„œ ê³ ì •/ìˆ¨ê¹€ ë¡œì§ì´ ì‹¤í–‰ë©ë‹ˆë‹¤.
+    // ì°¸ê³ : isTyping ì¤‘ì—ëŠ” Motionì´ í˜¸ì¶œë˜ì§€ ì•Šë„ë¡ Keyboard í•¨ìˆ˜ì—ì„œ ë§‰ê³  ìˆìŠµë‹ˆë‹¤.
 
     bool shouldRotate = (cameraMode == 1 || cameraMode == 3 || isLeftButtonDown);
 
@@ -1027,7 +1029,7 @@ void Motion(int x, int y) {
         mouse_y = y;
         float xoffset, yoffset;
 
-        // 1ÀÎÄª ¸ğµåÀÏ ¶§ ¸¶¿ì½º Ä¿¼­¸¦ Áß¾ÓÀ¸·Î ¿öÇÁ½ÃÄÑ ¹«ÇÑ È¸ÀüÀ» °¡´ÉÇÏ°Ô ÇÕ´Ï´Ù.
+        // 1ì¸ì¹­ ëª¨ë“œì¼ ë•Œ ë§ˆìš°ìŠ¤ ì»¤ì„œë¥¼ ì¤‘ì•™ìœ¼ë¡œ ì›Œí”„ì‹œì¼œ ë¬´í•œ íšŒì „ì„ ê°€ëŠ¥í•˜ê²Œ í•©ë‹ˆë‹¤.
         if (cameraMode == 3 || cameraMode == 1) {
             int centerX = width / 2;
             int centerY = height / 2;
@@ -1035,21 +1037,21 @@ void Motion(int x, int y) {
             xoffset = x - centerX;
             yoffset = y - centerY;
 
-            // Áß¾Ó¿¡ °íÁ¤
+            // ì¤‘ì•™ì— ê³ ì •
             if (x != centerX || y != centerY) {
                 glutWarpPointer(centerX, centerY);
             }
-            // 1ÀÎÄª ¸ğµå¿¡¼­´Â lastMouseX, Y´Â ´õ ÀÌ»ó »ç¿ëµÇÁö ¾Ê°í centerX, centerY°¡ ±âÁØÀÌ µË´Ï´Ù.
+            // 1ì¸ì¹­ ëª¨ë“œì—ì„œëŠ” lastMouseX, YëŠ” ë” ì´ìƒ ì‚¬ìš©ë˜ì§€ ì•Šê³  centerX, centerYê°€ ê¸°ì¤€ì´ ë©ë‹ˆë‹¤.
         }
         else {
-            // ±× ¿Ü ¸ğµå¿¡¼­´Â ±âÁ¸ ·ÎÁ÷ (µå·¡±×)
+            // ê·¸ ì™¸ ëª¨ë“œì—ì„œëŠ” ê¸°ì¡´ ë¡œì§ (ë“œë˜ê·¸)
             xoffset = x - lastMouseX;
             yoffset = y - lastMouseY;
             lastMouseX = x;
             lastMouseY = y;
         }
 
-        // ¿ÀÇÁ¼ÂÀÌ 0ÀÌ ¾Æ´Ï°Å³ª, 1ÀÎÄªÀÌ ¾Æ´Ñ ¸ğµå¿¡¼­ È¸Àü ÁßÀÏ ¶§¸¸ ¾÷µ¥ÀÌÆ®
+        // ì˜¤í”„ì…‹ì´ 0ì´ ì•„ë‹ˆê±°ë‚˜, 1ì¸ì¹­ì´ ì•„ë‹Œ ëª¨ë“œì—ì„œ íšŒì „ ì¤‘ì¼ ë•Œë§Œ ì—…ë°ì´íŠ¸
         if (xoffset != 0.0f || yoffset != 0.0f) {
             shipAngle -= xoffset * mouseSensitivity;
             shipPitch -= yoffset * mouseSensitivity;
@@ -1074,30 +1076,30 @@ void drawScene() {
     if (cameraMode == 1) { cameraPos = shipPos + glm::vec3(0, 0.5, 0) + shipDir * 2.0f; cameraTarget = cameraPos + shipDir; }
     else if (cameraMode == 2) { cameraPos = glm::vec3(0, 800, 10); cameraTarget = glm::vec3(0, 0, 0); cameraUp = glm::vec3(0, 0, -1); }
     else if (cameraMode == 4 && targetPlanetIndex != -1) {
-        // Å¸°Ù Çà¼ºÀÇ ÇöÀç À§Ä¡ °è»ê
+        // íƒ€ê²Ÿ í–‰ì„±ì˜ í˜„ì¬ ìœ„ì¹˜ ê³„ì‚°
         glm::vec3 planetPos = getPlanetPosition(targetPlanetIndex);
 
-        // Ä«¸Ş¶ó´Â Çà¼º À§Ä¡¿¡¼­ (5, 3, 5) Á¤µµ ¶³¾îÁø °÷¿¡ ¹èÄ¡
-        // Çà¼º Å©±â¿¡ ºñ·ÊÇØ¼­ ¸Ö¸® ¶³¾îÁö°Ô ÇÏ¸é ´õ ÁÁ½À´Ï´Ù.
+        // ì¹´ë©”ë¼ëŠ” í–‰ì„± ìœ„ì¹˜ì—ì„œ (5, 3, 5) ì •ë„ ë–¨ì–´ì§„ ê³³ì— ë°°ì¹˜
+        // í–‰ì„± í¬ê¸°ì— ë¹„ë¡€í•´ì„œ ë©€ë¦¬ ë–¨ì–´ì§€ê²Œ í•˜ë©´ ë” ì¢‹ìŠµë‹ˆë‹¤.
         float distOffset = planets[targetPlanetIndex].size * 4.0f + 5.0f;
 
         cameraPos = planetPos + glm::vec3(distOffset, distOffset * 0.5f, distOffset);
-        cameraTarget = planetPos; // Ä«¸Ş¶ó´Â Çà¼ºÀ» ¹Ù¶óº½
+        cameraTarget = planetPos; // ì¹´ë©”ë¼ëŠ” í–‰ì„±ì„ ë°”ë¼ë´„
     }
     else if (cameraMode == 5) {
-        // 1. Ä«¸Ş¶ó À§Ä¡: ÅÂ¾ç(0,0,0)ÀÇ ¹Ù·Î À§
-        // ÅÂ¾ç ¹İÁö¸§ÀÌ 30ÀÌ´Ï±î, Y=150 Á¤µµ¸é Àû´çÈ÷ ³ô½À´Ï´Ù.
+        // 1. ì¹´ë©”ë¼ ìœ„ì¹˜: íƒœì–‘(0,0,0)ì˜ ë°”ë¡œ ìœ„
+        // íƒœì–‘ ë°˜ì§€ë¦„ì´ 30ì´ë‹ˆê¹Œ, Y=150 ì •ë„ë©´ ì ë‹¹íˆ ë†’ìŠµë‹ˆë‹¤.
         cameraPos = glm::vec3(0.0f, 150.0f, 0.0f);
 
-        // 2. ¹Ù¶óº¸´Â °÷: ½Ã°£(globalTime)¿¡ µû¶ó È¸Àü
-        float rotateSpeed = globalTime * 0.2f; // È¸Àü ¼Óµµ (¼ıÀÚ°¡ ÀÛÀ»¼ö·Ï ´À¸²)
-        float viewRadius = 1000.0f; // ¸Ö¸® ¹Ù¶óº½
+        // 2. ë°”ë¼ë³´ëŠ” ê³³: ì‹œê°„(globalTime)ì— ë”°ë¼ íšŒì „
+        float rotateSpeed = globalTime * 0.2f; // íšŒì „ ì†ë„ (ìˆ«ìê°€ ì‘ì„ìˆ˜ë¡ ëŠë¦¼)
+        float viewRadius = 1000.0f; // ë©€ë¦¬ ë°”ë¼ë´„
 
-        // ¿øÀ» ±×¸®¸ç È¸ÀüÇÏ´Â Å¸°Ù ÁÂÇ¥ °è»ê
+        // ì›ì„ ê·¸ë¦¬ë©° íšŒì „í•˜ëŠ” íƒ€ê²Ÿ ì¢Œí‘œ ê³„ì‚°
         cameraTarget.x = cos(glm::radians(rotateSpeed)) * viewRadius;
         cameraTarget.z = sin(glm::radians(rotateSpeed)) * viewRadius;
 
-        // Y°ªÀ» 0º¸´Ù ³·°Ô(-200) ÁÖ¸é »ìÂ¦ ¾Æ·¡¸¦ ³»·Á´Ùº¸°Ô µÇ¾î ±Ëµµ°¡ ´õ Àß º¸ÀÔ´Ï´Ù.
+        // Yê°’ì„ 0ë³´ë‹¤ ë‚®ê²Œ(-200) ì£¼ë©´ ì‚´ì§ ì•„ë˜ë¥¼ ë‚´ë ¤ë‹¤ë³´ê²Œ ë˜ì–´ ê¶¤ë„ê°€ ë” ì˜ ë³´ì…ë‹ˆë‹¤.
         cameraTarget.y = -200.0f;
 
         cameraUp = glm::vec3(0, 1, 0);
@@ -1112,7 +1114,7 @@ void drawScene() {
     glUniform3f(lightPosLoc, 0, 0, 0);
     glUniform3f(viewPosLoc, cameraPos.x, cameraPos.y, cameraPos.z);
 
-    // ¹è°æ
+    // ë°°ê²½
     glUniform1i(isSunLoc, 1);
     glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(glm::scale(glm::mat4(1.0f), glm::vec3(1000.0f))));
     glUniform4f(colorLoc, 1, 1, 1, 1);
@@ -1120,7 +1122,7 @@ void drawScene() {
     glBindVertexArray(sphereVAO);
     glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
 
-    // [1] º° ±×¸®±â
+    // [1] ë³„ ê·¸ë¦¬ê¸°
     // ---------------------------------------------------------
     glUniform1i(isSunLoc, 1);
     glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
@@ -1128,34 +1130,34 @@ void drawScene() {
     glBindTexture(GL_TEXTURE_2D, whiteTex);
 
     glPointSize(2.0f);
-    glBindVertexArray(starVAO); // ¡Ú ¿©±â¼­ 'º°' ¸ğµ¨À» ¼±ÅÃÇÔ
-    glDrawArrays(GL_POINTS, 0, starCount); // º° ±×¸®±â
+    glBindVertexArray(starVAO); // â˜… ì—¬ê¸°ì„œ 'ë³„' ëª¨ë¸ì„ ì„ íƒí•¨
+    glDrawArrays(GL_POINTS, 0, starCount); // ë³„ ê·¸ë¦¬ê¸°
 
     // ---------------------------------------------------------
-    // [2] ¡Ú¡Ú¡Ú ÇÙ½É ¼öÁ¤ »çÇ× ¡Ú¡Ú¡Ú
-    // º° ±×¸®±â°¡ ³¡³µÀ¸´Ï, ´Ù½Ã '±¸(Çà¼º)' ¸ğµ¨·Î µ¹¾Æ¿Í¾ß ÇÕ´Ï´Ù!
-    // ÀÌ ÁÙÀÌ ¾øÀ¸¸é ÅÂ¾çÀ» ±×¸± ¶§ ²¨Áı´Ï´Ù.
+    // [2] â˜…â˜…â˜… í•µì‹¬ ìˆ˜ì • ì‚¬í•­ â˜…â˜…â˜…
+    // ë³„ ê·¸ë¦¬ê¸°ê°€ ëë‚¬ìœ¼ë‹ˆ, ë‹¤ì‹œ 'êµ¬(í–‰ì„±)' ëª¨ë¸ë¡œ ëŒì•„ì™€ì•¼ í•©ë‹ˆë‹¤!
+    // ì´ ì¤„ì´ ì—†ìœ¼ë©´ íƒœì–‘ì„ ê·¸ë¦´ ë•Œ êº¼ì§‘ë‹ˆë‹¤.
     // ---------------------------------------------------------
     glBindVertexArray(sphereVAO);
 
-    // ¡Ú¡Ú¡Ú ¿©±â°¡ Á¦ÀÏ Áß¿äÇÕ´Ï´Ù! ¡Ú¡Ú¡Ú
-    // glDrawElements°¡ ¾Æ´Ï¶ó "glDrawArrays"¿©¾ß ÇÕ´Ï´Ù.
-    // ¶ÇÇÑ sphereIndexCount°¡ ¾Æ´Ï¶ó "starCount"¿©¾ß ÇÕ´Ï´Ù.
+    // â˜…â˜…â˜… ì—¬ê¸°ê°€ ì œì¼ ì¤‘ìš”í•©ë‹ˆë‹¤! â˜…â˜…â˜…
+    // glDrawElementsê°€ ì•„ë‹ˆë¼ "glDrawArrays"ì—¬ì•¼ í•©ë‹ˆë‹¤.
+    // ë˜í•œ sphereIndexCountê°€ ì•„ë‹ˆë¼ "starCount"ì—¬ì•¼ í•©ë‹ˆë‹¤.
     glDrawArrays(GL_POINTS, 0, starCount);
 
 
-    if (!isSunDestroyed) { // [¼öÁ¤] ÅÂ¾çÀÌ ÆÄ±«µÇÁö ¾Ê¾ÒÀ» ¶§¸¸ ±×¸²
+    if (!isSunDestroyed) { // [ìˆ˜ì •] íƒœì–‘ì´ íŒŒê´´ë˜ì§€ ì•Šì•˜ì„ ë•Œë§Œ ê·¸ë¦¼
 
-        float sunScale = 30.0f; // ±âº» Å©±â
+        float sunScale = 30.0f; // ê¸°ë³¸ í¬ê¸°
 
         if (isSunExploding) {
-            // [Ãß°¡] Æø¹ß ÁßÀÌ¸é Å©±â°¡ ±âÇÏ±Ş¼öÀûÀ¸·Î Ä¿Áü
-            // Áøµ¿ È¿°ú (Shake) Ãß°¡
+            // [ì¶”ê°€] í­ë°œ ì¤‘ì´ë©´ í¬ê¸°ê°€ ê¸°í•˜ê¸‰ìˆ˜ì ìœ¼ë¡œ ì»¤ì§
+            // ì§„ë™ íš¨ê³¼ (Shake) ì¶”ê°€
             float shakeX = (rand() % 100 - 50) / 50.0f * (sunExplosionTimer * 0.5f);
             float shakeY = (rand() % 100 - 50) / 50.0f * (sunExplosionTimer * 0.5f);
             float shakeZ = (rand() % 100 - 50) / 50.0f * (sunExplosionTimer * 0.5f);
 
-            // ½Ã°£ÀÌ Áö³¯¼ö·Ï Å©±â Áõ°¡ (ÃÊ¹İ¿£ ÃµÃµÈ÷, ³ªÁß¿£ ºü¸£°Ô)
+            // ì‹œê°„ì´ ì§€ë‚ ìˆ˜ë¡ í¬ê¸° ì¦ê°€ (ì´ˆë°˜ì—” ì²œì²œíˆ, ë‚˜ì¤‘ì—” ë¹ ë¥´ê²Œ)
             sunScale = 30.0f + (sunExplosionTimer * sunExplosionTimer * 2.0f);
 
             glm::mat4 sunModel = glm::translate(glm::mat4(1.0f), glm::vec3(shakeX, shakeY, shakeZ));
@@ -1164,12 +1166,12 @@ void drawScene() {
 
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(sunModel));
 
-            // Æø¹ß Áß¿¡´Â »ö»óÀÌ Á¡Á¡ ÇÏ¾é°Ô º¯ÇÔ
+            // í­ë°œ ì¤‘ì—ëŠ” ìƒ‰ìƒì´ ì ì  í•˜ì–—ê²Œ ë³€í•¨
             float whiteness = std::min(sunExplosionTimer / 10.0f, 1.0f);
             glUniform4f(colorLoc, 1.0f, 1.0f - whiteness * 0.5f, 1.0f - whiteness * 0.5f, 1.0f);
         }
         else {
-            // Æò»ó½Ã ÅÂ¾ç
+            // í‰ìƒì‹œ íƒœì–‘
             glm::mat4 sunModel = glm::rotate(glm::mat4(1.0f), glm::radians(rotateTime * 0.2f), glm::vec3(0, 1, 0));
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(glm::scale(sunModel, glm::vec3(30.0f))));
             glUniform4f(colorLoc, 1, 1, 1, 1);
@@ -1179,34 +1181,34 @@ void drawScene() {
         glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
     }
 
-    // Çà¼º
+    // í–‰ì„±
     for (auto& p : planets) {
-        glUniform1i(isSunLoc, 1); // ±Ëµµ¼±
-        glBindTexture(GL_TEXTURE_2D, whiteTex); // [¼öÁ¤] Èò»ö ÅØ½ºÃ³ »ç¿ë
+        glUniform1i(isSunLoc, 1); // ê¶¤ë„ì„ 
+        glBindTexture(GL_TEXTURE_2D, whiteTex); // [ìˆ˜ì •] í°ìƒ‰ í…ìŠ¤ì²˜ ì‚¬ìš©
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(glm::mat4(1.0f)));
         glUniform4f(colorLoc, 0.2f, 0.2f, 0.4f, 1.0f);
         glBegin(GL_LINE_LOOP);
         for (int a = 0; a < 360; a++) glVertex3f(cos(glm::radians((float)a)) * p.distance, 0, sin(glm::radians((float)a)) * p.distance);
         glEnd();
         if (p.size < 0.001f) continue;
-        glUniform1i(isSunLoc, 0); // Çà¼º º»Ã¼
-        // [¼öÁ¤] °øÀü °è»ê: globalTime -> orbitTime »ç¿ë
+        glUniform1i(isSunLoc, 0); // í–‰ì„± ë³¸ì²´
+        // [ìˆ˜ì •] ê³µì „ ê³„ì‚°: globalTime -> orbitTime ì‚¬ìš©
         glm::mat4 pModel = glm::rotate(glm::mat4(1.0f), glm::radians(orbitTime * p.orbitSpeed), glm::vec3(0, 1, 0));
         pModel = glm::translate(pModel, glm::vec3(p.distance, 0, 0));
-        glm::mat4 earthPos = pModel; // ´Ş À§Ä¡ ÀúÀå¿ë
+        glm::mat4 earthPos = pModel; // ë‹¬ ìœ„ì¹˜ ì €ì¥ìš©
 
-        // ¡Ú¡Ú¡Ú [¼öÁ¤ ÆÄÆ® ½ÃÀÛ] ÀÚÀüÃà ±â¿ï±â ¹× ÀÚÀü Àû¿ë ¡Ú¡Ú¡Ú
+        // â˜…â˜…â˜… [ìˆ˜ì • íŒŒíŠ¸ ì‹œì‘] ìì „ì¶• ê¸°ìš¸ê¸° ë° ìì „ ì ìš© â˜…â˜…â˜…
 
-      // [Áß¿ä] ±â¿ï±â¸¦ ¸ÕÀú Àû¿ëÇØ¾ß ¿Ã¹Ù¸£°Ô µ½´Ï´Ù.
-        // 1. ÀÚÀüÃà ±â¿ï±â (ZÃà È¸Àü)
+      // [ì¤‘ìš”] ê¸°ìš¸ê¸°ë¥¼ ë¨¼ì € ì ìš©í•´ì•¼ ì˜¬ë°”ë¥´ê²Œ ë•ë‹ˆë‹¤.
+        // 1. ìì „ì¶• ê¸°ìš¸ê¸° (Zì¶• íšŒì „)
         pModel = glm::rotate(pModel, glm::radians(p.axisTilt), glm::vec3(0, 0, 1));
 
-        // 2. ÀÚÀü (YÃà È¸Àü)
-        // Ç¥ÀÇ µ¥ÀÌÅÍ°¡ ¹İ¿µµÈ ÀÚÀü ¼Óµµ Àû¿ë
+        // 2. ìì „ (Yì¶• íšŒì „)
+        // í‘œì˜ ë°ì´í„°ê°€ ë°˜ì˜ëœ ìì „ ì†ë„ ì ìš©
         pModel = glm::rotate(pModel, glm::radians(rotateTime * p.selfRotateSpeed * 5.0f), glm::vec3(0, 1, 0));
-        // *5.0f´Â ÀüÃ¼ÀûÀÎ È¸Àü ¼Óµµ¸¦ Á¶ÀıÇÏ´Â °è¼öÀÔ´Ï´Ù. (³Ê¹« ´À¸®¸é ¼ıÀÚ¸¦ Å°¿ì¼¼¿ä)
+        // *5.0fëŠ” ì „ì²´ì ì¸ íšŒì „ ì†ë„ë¥¼ ì¡°ì ˆí•˜ëŠ” ê³„ìˆ˜ì…ë‹ˆë‹¤. (ë„ˆë¬´ ëŠë¦¬ë©´ ìˆ«ìë¥¼ í‚¤ìš°ì„¸ìš”)
 
-        // 3. Å©±â Àû¿ë
+        // 3. í¬ê¸° ì ìš©
         pModel = glm::scale(pModel, glm::vec3(p.size));
 
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(pModel));
@@ -1216,8 +1218,8 @@ void drawScene() {
 
         if (p.name == "earth" && p.size > 0.0f) {
             glm::mat4 mModel = glm::rotate(earthPos, glm::radians(orbitTime * 3.0f), glm::vec3(0, 1, 0));
-            mModel = glm::translate(mModel, glm::vec3(3.0f, 0, 0)); // ´Ş°ú Áö±¸ »çÀÌ °Å¸®µµ »ìÂ¦ ¹ú¸² (1.0 -> 3.0)
-            mModel = glm::scale(mModel, glm::vec3(0.25f)); // ´Ş Å©±â Á¶Àı
+            mModel = glm::translate(mModel, glm::vec3(3.0f, 0, 0)); // ë‹¬ê³¼ ì§€êµ¬ ì‚¬ì´ ê±°ë¦¬ë„ ì‚´ì§ ë²Œë¦¼ (1.0 -> 3.0)
+            mModel = glm::scale(mModel, glm::vec3(0.25f)); // ë‹¬ í¬ê¸° ì¡°ì ˆ
 
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(mModel));
             glBindTexture(GL_TEXTURE_2D, moonTex);
@@ -1228,30 +1230,30 @@ void drawScene() {
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             glDepthMask(GL_FALSE);
 
-            glUniform1i(isSunLoc, 1); // Á¶¸í ¹«½Ã (¹à°Ô)
+            glUniform1i(isSunLoc, 1); // ì¡°ëª… ë¬´ì‹œ (ë°ê²Œ)
 
-            // °í¸® Å©±â ¼³Á¤
-            glm::mat4 rModel = glm::scale(pModel, glm::vec3(2.0f, 2.0f, 2.0f)); // °í¸® Å©±â ¹èÀ²
+            // ê³ ë¦¬ í¬ê¸° ì„¤ì •
+            glm::mat4 rModel = glm::scale(pModel, glm::vec3(2.0f, 2.0f, 2.0f)); // ê³ ë¦¬ í¬ê¸° ë°°ìœ¨
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(rModel));
 
-            glUniform4f(colorLoc, 1.2f, 1.2f, 1.2f, 0.8f); // ¾à°£ Åõ¸íÇÏ°Ô
+            glUniform4f(colorLoc, 1.2f, 1.2f, 1.2f, 0.8f); // ì•½ê°„ íˆ¬ëª…í•˜ê²Œ
 
             glBindTexture(GL_TEXTURE_2D, saturnRingTex);
             glBindVertexArray(ringVAO);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, (72 + 1) * 2);
 
-            glUniform1i(isSunLoc, 0); // Á¶¸í º¹±¸
+            glUniform1i(isSunLoc, 0); // ì¡°ëª… ë³µêµ¬
 
             glDepthMask(GL_TRUE);
             glDisable(GL_BLEND);
-            glBindVertexArray(sphereVAO); // ´Ù½Ã ±¸ ¸ğµ¨·Î º¹±¸
+            glBindVertexArray(sphereVAO); // ë‹¤ì‹œ êµ¬ ëª¨ë¸ë¡œ ë³µêµ¬
         }
     }
 
-    // ¿î¼®
+    // ìš´ì„
     glUniform1i(isSunLoc, 0);
     glBindVertexArray(asteroidVAO);
-    glBindTexture(GL_TEXTURE_2D, moonTex); // ¿î¼® ÅØ½ºÃ³
+    glBindTexture(GL_TEXTURE_2D, moonTex); // ìš´ì„ í…ìŠ¤ì²˜
     for (const auto& a : asteroids) {
         if (a.size <= 0.001f) continue;
         glm::mat4 aModel = glm::translate(glm::mat4(1.0f), a.position + a.velocity * globalTime);
@@ -1265,41 +1267,41 @@ void drawScene() {
         glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
     }
 
-    // ================== [¼öÁ¤µÊ] ¹Ì»çÀÏ ±×¸®±â (±×·²µíÇÑ ¸ğ¾ç) ==================
+    // ================== [ìˆ˜ì •ë¨] ë¯¸ì‚¬ì¼ ê·¸ë¦¬ê¸° (ê·¸ëŸ´ë“¯í•œ ëª¨ì–‘) ==================
     glUniform1i(isSunLoc, 1);
     glBindVertexArray(sphereVAO);
-    glBindTexture(GL_TEXTURE_2D, whiteTex); // [¼öÁ¤] Èò»ö ÅØ½ºÃ³ »ç¿ë
+    glBindTexture(GL_TEXTURE_2D, whiteTex); // [ìˆ˜ì •] í°ìƒ‰ í…ìŠ¤ì²˜ ì‚¬ìš©
 
     for (const auto& m : missiles) {
-        // 1. ¹Ì»çÀÏÀÇ ÁøÇà ¹æÇâ(Direction) °è»ê
+        // 1. ë¯¸ì‚¬ì¼ì˜ ì§„í–‰ ë°©í–¥(Direction) ê³„ì‚°
         glm::vec3 dir = glm::normalize(m.velocity);
 
-        // 2. ÁøÇà ¹æÇâÀ» ¹Ù¶óº¸´Â È¸Àü Çà·Ä(Model Matrix) »ı¼º (¡ÚÇÙ½É¡Ú)
-        // glm::lookAtÀº 'Ä«¸Ş¶ó'°¡ º¸´Â Çà·ÄÀÌ¹Ç·Î, ÀÌ¸¦ 'µÚÁıÀ¸¸é(inverse)' ¹°Ã¼°¡ ±× ¹æÇâÀ» º¸´Â Çà·ÄÀÌ µË´Ï´Ù.
-        // À§Ä¡(m.position)¿¡¼­ -> ¸ñÇ¥ÁöÁ¡(m.position + dir)À» ¹Ù¶óº¸°Ô ¸¸µê
-        // µî(Up)Àº Ç×»ó (0,1,0) ÇÏ´ÃÀ» ÇâÇÏ°Ô ÇØ¼­ ±â¿ì¶×ÇÏÁö ¾Ê°Ô ÇÔ
+        // 2. ì§„í–‰ ë°©í–¥ì„ ë°”ë¼ë³´ëŠ” íšŒì „ í–‰ë ¬(Model Matrix) ìƒì„± (â˜…í•µì‹¬â˜…)
+        // glm::lookAtì€ 'ì¹´ë©”ë¼'ê°€ ë³´ëŠ” í–‰ë ¬ì´ë¯€ë¡œ, ì´ë¥¼ 'ë’¤ì§‘ìœ¼ë©´(inverse)' ë¬¼ì²´ê°€ ê·¸ ë°©í–¥ì„ ë³´ëŠ” í–‰ë ¬ì´ ë©ë‹ˆë‹¤.
+        // ìœ„ì¹˜(m.position)ì—ì„œ -> ëª©í‘œì§€ì (m.position + dir)ì„ ë°”ë¼ë³´ê²Œ ë§Œë“¦
+        // ë“±(Up)ì€ í•­ìƒ (0,1,0) í•˜ëŠ˜ì„ í–¥í•˜ê²Œ í•´ì„œ ê¸°ìš°ëš±í•˜ì§€ ì•Šê²Œ í•¨
         glm::mat4 missileModel = glm::inverse(glm::lookAt(m.position, m.position + dir, glm::vec3(0.0f, 1.0f, 0.0f)));
 
-        // 3. ¸ğµ¨ ¹æÇâ º¸Á¤ (ÇÊ¿äÇÑ °æ¿ì)
-        // ¹Ì»çÀÏ ¸ğµ¨ÀÌ ¿ø·¡ -Z(¾Õ)°¡ ¾Æ´Ï¶ó +Z(µÚ)¸¦ º¸°í ¸¸µé¾îÁ³´Ù¸é °Å²Ù·Î ³¯¾Æ°©´Ï´Ù.
-        // ¸¸¾à ¹Ì»çÀÏÀÌ ²¿¸®ºÎÅÍ ³¯¾Æ°¡¸é ¾Æ·¡ ÁÖ¼®À» Ç®¾î¼­ 180µµ µ¹·ÁÁÖ¼¼¿ä.
+        // 3. ëª¨ë¸ ë°©í–¥ ë³´ì • (í•„ìš”í•œ ê²½ìš°)
+        // ë¯¸ì‚¬ì¼ ëª¨ë¸ì´ ì›ë˜ -Z(ì•)ê°€ ì•„ë‹ˆë¼ +Z(ë’¤)ë¥¼ ë³´ê³  ë§Œë“¤ì–´ì¡Œë‹¤ë©´ ê±°ê¾¸ë¡œ ë‚ ì•„ê°‘ë‹ˆë‹¤.
+        // ë§Œì•½ ë¯¸ì‚¬ì¼ì´ ê¼¬ë¦¬ë¶€í„° ë‚ ì•„ê°€ë©´ ì•„ë˜ ì£¼ì„ì„ í’€ì–´ì„œ 180ë„ ëŒë ¤ì£¼ì„¸ìš”.
         missileModel = glm::rotate(missileModel, glm::radians(180.0f), glm::vec3(0.0f, 1.0f, 0.0f));
 
-        // --- ¹Ì»çÀÏ ¸öÃ¼ ---
+        // --- ë¯¸ì‚¬ì¼ ëª¸ì²´ ---
         glm::mat4 bodyModel = glm::scale(missileModel, glm::vec3(0.1f, 0.1f, 0.8f));
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(bodyModel));
         glUniform4f(colorLoc, 0.2f, 0.8f, 1.0f, 1.0f);
         glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
 
-        // --- ¹Ì»çÀÏ ÅºµÎ ---
-        glm::mat4 headModel = glm::translate(missileModel, glm::vec3(0.0f, 0.0f, 0.8f)); // ¸öÃ¼ ¾ÕÂÊÀ¸·Î(ZÃà)
-        // *ÁÖÀÇ: ¿©±â¼­ translate´Â ÀÌ¹Ì È¸ÀüµÈ Ãà ±âÁØ(Local)À¸·Î ÀÌµ¿ÇÏ¹Ç·Î ZÃàÀ¸·Î ÀÌµ¿ÇÏ¸é µÊ
+        // --- ë¯¸ì‚¬ì¼ íƒ„ë‘ ---
+        glm::mat4 headModel = glm::translate(missileModel, glm::vec3(0.0f, 0.0f, 0.8f)); // ëª¸ì²´ ì•ìª½ìœ¼ë¡œ(Zì¶•)
+        // *ì£¼ì˜: ì—¬ê¸°ì„œ translateëŠ” ì´ë¯¸ íšŒì „ëœ ì¶• ê¸°ì¤€(Local)ìœ¼ë¡œ ì´ë™í•˜ë¯€ë¡œ Zì¶•ìœ¼ë¡œ ì´ë™í•˜ë©´ ë¨
         headModel = glm::scale(headModel, glm::vec3(0.1f, 0.1f, 0.3f));
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(headModel));
         glUniform4f(colorLoc, 1.0f, 0.2f, 0.0f, 1.0f);
         glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
 
-        // --- ¹Ì»çÀÏ ³¯°³ ---
+        // --- ë¯¸ì‚¬ì¼ ë‚ ê°œ ---
         for (int i = 0; i < 4; ++i) {
             glm::mat4 finModel = glm::rotate(missileModel, glm::radians(i * 90.0f), glm::vec3(0, 0, 1));
             finModel = glm::translate(finModel, glm::vec3(0.15f, 0.0f, -0.6f));
@@ -1310,71 +1312,71 @@ void drawScene() {
         }
     }
 
-    // ================== [¼öÁ¤µÊ] ¿ìÁÖ¼± ±×¸®±â (±×·²µíÇÑ ¸ğ¾ç) ==================
+    // ================== [ìˆ˜ì •ë¨] ìš°ì£¼ì„  ê·¸ë¦¬ê¸° (ê·¸ëŸ´ë“¯í•œ ëª¨ì–‘) ==================
     if (cameraMode != 1) {
-        glBindTexture(GL_TEXTURE_2D, whiteTex); // [¼öÁ¤] Èò»ö ÅØ½ºÃ³ »ç¿ë
+        glBindTexture(GL_TEXTURE_2D, whiteTex); // [ìˆ˜ì •] í°ìƒ‰ í…ìŠ¤ì²˜ ì‚¬ìš©
 
-        // 1. ¿ìÁÖ¼± ±âº» º¯È¯ Çà·Ä (À§Ä¡, È¸Àü Àû¿ë)
+        // 1. ìš°ì£¼ì„  ê¸°ë³¸ ë³€í™˜ í–‰ë ¬ (ìœ„ì¹˜, íšŒì „ ì ìš©)
         glm::mat4 shipBaseModel = glm::mat4(1.0f);
         shipBaseModel = glm::translate(shipBaseModel, shipPos);
         shipBaseModel = glm::rotate(shipBaseModel, glm::radians(shipAngle), glm::vec3(0.0f, 1.0f, 0.0f));
-        // À§¾Æ·¡ È¸Àü (Pitch) Àû¿ë
+        // ìœ„ì•„ë˜ íšŒì „ (Pitch) ì ìš©
         shipBaseModel = glm::rotate(shipBaseModel, glm::radians(-shipPitch), glm::vec3(1.0f, 0.0f, 0.0f));
-        shipBaseModel = glm::scale(shipBaseModel, glm::vec3(0.5f)); // ÀüÃ¼ Å©±â Á¶Àı
+        shipBaseModel = glm::scale(shipBaseModel, glm::vec3(0.5f)); // ì „ì²´ í¬ê¸° ì¡°ì ˆ
 
-        // --- º»Ã¼ (±æÂßÇÑ ¸öÅë) ---
+        // --- ë³¸ì²´ (ê¸¸ì­‰í•œ ëª¸í†µ) ---
         glm::mat4 bodyModel = glm::scale(shipBaseModel, glm::vec3(0.7f, 0.5f, 2.5f));
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(bodyModel));
-        glUniform4f(colorLoc, 0.6f, 0.6f, 0.7f, 1.0f); // È¸»ö º»Ã¼
+        glUniform4f(colorLoc, 0.6f, 0.6f, 0.7f, 1.0f); // íšŒìƒ‰ ë³¸ì²´
         glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
 
-        // --- Á¶Á¾¼® (ÆÄ¶õ»ö À¯¸®Ã¢ ´À³¦) ---
-        glm::mat4 cockpitModel = glm::translate(shipBaseModel, glm::vec3(0.0f, 0.3f, 0.5f)); // ¾à°£ À§ÂÊ, ¾ÕÂÊÀ¸·Î
+        // --- ì¡°ì¢…ì„ (íŒŒë€ìƒ‰ ìœ ë¦¬ì°½ ëŠë‚Œ) ---
+        glm::mat4 cockpitModel = glm::translate(shipBaseModel, glm::vec3(0.0f, 0.3f, 0.5f)); // ì•½ê°„ ìœ„ìª½, ì•ìª½ìœ¼ë¡œ
         cockpitModel = glm::scale(cockpitModel, glm::vec3(0.4f, 0.3f, 0.8f));
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(cockpitModel));
-        glUniform4f(colorLoc, 0.2f, 0.6f, 1.0f, 1.0f); // ÆÄ¶õ»ö Á¶Á¾¼®
+        glUniform4f(colorLoc, 0.2f, 0.6f, 1.0f, 1.0f); // íŒŒë€ìƒ‰ ì¡°ì¢…ì„
         glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
 
-        // --- ³¯°³ (¾ç¿·À¸·Î ³Ğ°Ô) ---
-        // ¿ŞÂÊ ³¯°³
+        // --- ë‚ ê°œ (ì–‘ì˜†ìœ¼ë¡œ ë„“ê²Œ) ---
+        // ì™¼ìª½ ë‚ ê°œ
         glm::mat4 leftWingModel = glm::translate(shipBaseModel, glm::vec3(-1.2f, 0.0f, -0.5f));
         leftWingModel = glm::scale(leftWingModel, glm::vec3(1.5f, 0.1f, 1.2f));
-        leftWingModel = glm::rotate(leftWingModel, glm::radians(20.0f), glm::vec3(0, 0, 1)); // ¾à°£ ±â¿ïÀÓ
+        leftWingModel = glm::rotate(leftWingModel, glm::radians(20.0f), glm::vec3(0, 0, 1)); // ì•½ê°„ ê¸°ìš¸ì„
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(leftWingModel));
-        glUniform4f(colorLoc, 0.7f, 0.2f, 0.2f, 1.0f); // »¡°£»ö ³¯°³
+        glUniform4f(colorLoc, 0.7f, 0.2f, 0.2f, 1.0f); // ë¹¨ê°„ìƒ‰ ë‚ ê°œ
         glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
 
-        // ¿À¸¥ÂÊ ³¯°³ (´ëÄª)
+        // ì˜¤ë¥¸ìª½ ë‚ ê°œ (ëŒ€ì¹­)
         glm::mat4 rightWingModel = glm::translate(shipBaseModel, glm::vec3(1.2f, 0.0f, -0.5f));
         rightWingModel = glm::scale(rightWingModel, glm::vec3(1.5f, 0.1f, 1.2f));
-        rightWingModel = glm::rotate(rightWingModel, glm::radians(-20.0f), glm::vec3(0, 0, 1)); // ¹İ´ë·Î ±â¿ïÀÓ
+        rightWingModel = glm::rotate(rightWingModel, glm::radians(-20.0f), glm::vec3(0, 0, 1)); // ë°˜ëŒ€ë¡œ ê¸°ìš¸ì„
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(rightWingModel));
-        glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0); // »ö»óÀº À§¿¡¼­ ¼³Á¤ÇÑ »¡°£»ö ±×´ë·Î
+        glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0); // ìƒ‰ìƒì€ ìœ„ì—ì„œ ì„¤ì •í•œ ë¹¨ê°„ìƒ‰ ê·¸ëŒ€ë¡œ
 
-        // --- ¿£Áø (µÚÂÊ¿¡ µÎ °³) ---
+        // --- ì—”ì§„ (ë’¤ìª½ì— ë‘ ê°œ) ---
         for (int i = -1; i <= 1; i += 2) {
-            glm::mat4 engineModel = glm::translate(shipBaseModel, glm::vec3(0.6f * i, 0.0f, -1.5f)); // ¾ç¿·, µÚÂÊ
+            glm::mat4 engineModel = glm::translate(shipBaseModel, glm::vec3(0.6f * i, 0.0f, -1.5f)); // ì–‘ì˜†, ë’¤ìª½
             engineModel = glm::scale(engineModel, glm::vec3(0.3f, 0.3f, 0.8f));
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(engineModel));
-            glUniform4f(colorLoc, 0.3f, 0.3f, 0.3f, 1.0f); // ÁøÇÑ È¸»ö ¿£Áø
+            glUniform4f(colorLoc, 0.3f, 0.3f, 0.3f, 1.0f); // ì§„í•œ íšŒìƒ‰ ì—”ì§„
             glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
 
-            // ¿£Áø ³ëÁñ (ÁÖÈ²»ö ºÒ²É ³ª¿À´Â ºÎºĞ)
-            glm::mat4 nozzleModel = glm::translate(engineModel, glm::vec3(0.0f, 0.0f, -1.0f)); // ¿£Áø µÚÂÊ
-            nozzleModel = glm::scale(nozzleModel, glm::vec3(0.8f, 0.8f, 0.2f)); // ¾à°£ ÀÛ°í ³³ÀÛÇÏ°Ô
+            // ì—”ì§„ ë…¸ì¦ (ì£¼í™©ìƒ‰ ë¶ˆê½ƒ ë‚˜ì˜¤ëŠ” ë¶€ë¶„)
+            glm::mat4 nozzleModel = glm::translate(engineModel, glm::vec3(0.0f, 0.0f, -1.0f)); // ì—”ì§„ ë’¤ìª½
+            nozzleModel = glm::scale(nozzleModel, glm::vec3(0.8f, 0.8f, 0.2f)); // ì•½ê°„ ì‘ê³  ë‚©ì‘í•˜ê²Œ
             glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(nozzleModel));
-            glUniform4f(colorLoc, 1.0f, 0.5f, 0.0f, 1.0f); // ÁÖÈ²»ö ³ëÁñ
+            glUniform4f(colorLoc, 1.0f, 0.5f, 0.0f, 1.0f); // ì£¼í™©ìƒ‰ ë…¸ì¦
             glDrawElements(GL_TRIANGLES, sphereIndexCount, GL_UNSIGNED_INT, 0);
         }
     }
 
-    // ÆÄÆ¼Å¬
+    // íŒŒí‹°í´
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE);
     glDepthMask(GL_FALSE);
     glUniform1i(isSunLoc, 1);
     glBindVertexArray(sphereVAO);
-    glBindTexture(GL_TEXTURE_2D, whiteTex); // [¼öÁ¤] Èò»ö ÅØ½ºÃ³ »ç¿ë
+    glBindTexture(GL_TEXTURE_2D, whiteTex); // [ìˆ˜ì •] í°ìƒ‰ í…ìŠ¤ì²˜ ì‚¬ìš©
     for (const auto& p : particles) {
         glm::mat4 pModel = glm::scale(glm::translate(glm::mat4(1.0f), p.position), glm::vec3(p.size));
         glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(pModel));
@@ -1385,7 +1387,7 @@ void drawScene() {
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     glDisable(GL_BLEND);
     if (isGameCleared) {
-        // 1. 2D ¸ğµå·Î ÀüÈ¯
+        // 1. 2D ëª¨ë“œë¡œ ì „í™˜
         glMatrixMode(GL_PROJECTION);
         glPushMatrix();
         glLoadIdentity();
@@ -1396,14 +1398,14 @@ void drawScene() {
         glLoadIdentity();
 
         glDisable(GL_DEPTH_TEST);
-        glUseProgram(0); // ½¦ÀÌ´õ ²ô±â
+        glUseProgram(0); // ì‰ì´ë” ë„ê¸°
 
-        // ¡Ú¡Ú¡Ú [ÇØ°áÃ¥] Á¶¸í°ú ÅØ½ºÃ³¸¦ ²¨¾ß »ö»óÀÌ Á¦´ë·Î ³ª¿É´Ï´Ù ¡Ú¡Ú¡Ú
-        glDisable(GL_LIGHTING);   // Á¶¸í ²ô±â (ÀÌ°Ô ÄÑÁ® ÀÖÀ¸¸é °Ë°Ô ³ª¿È)
-        glDisable(GL_TEXTURE_2D); // ÅØ½ºÃ³ ²ô±â (È¤½Ã ÅØ½ºÃ³°¡ ¼¯ÀÌ´Â °Í ¹æÁö)
+        // â˜…â˜…â˜… [í•´ê²°ì±…] ì¡°ëª…ê³¼ í…ìŠ¤ì²˜ë¥¼ êº¼ì•¼ ìƒ‰ìƒì´ ì œëŒ€ë¡œ ë‚˜ì˜µë‹ˆë‹¤ â˜…â˜…â˜…
+        glDisable(GL_LIGHTING);   // ì¡°ëª… ë„ê¸° (ì´ê²Œ ì¼œì ¸ ìˆìœ¼ë©´ ê²€ê²Œ ë‚˜ì˜´)
+        glDisable(GL_TEXTURE_2D); // í…ìŠ¤ì²˜ ë„ê¸° (í˜¹ì‹œ í…ìŠ¤ì²˜ê°€ ì„ì´ëŠ” ê²ƒ ë°©ì§€)
 
-        // 2. ÅØ½ºÆ® ¼³Á¤ ¹× Ãâ·Â
-        glColor3f(1.0f, 0.0f, 0.0f); // »¡°£»ö (ÀÌÁ¦ Àß º¸ÀÏ °Ì´Ï´Ù)
+        // 2. í…ìŠ¤íŠ¸ ì„¤ì • ë° ì¶œë ¥
+        glColor3f(1.0f, 0.0f, 0.0f); // ë¹¨ê°„ìƒ‰ (ì´ì œ ì˜ ë³´ì¼ ê²ë‹ˆë‹¤)
 
         float cx = width / 2.0f;
         float cy = height / 2.0f;
@@ -1412,9 +1414,9 @@ void drawScene() {
         glRasterPos2f(cx - 140, cy);
         renderBitmapString(cx - 140, cy, GLUT_BITMAP_TIMES_ROMAN_24, winText.c_str());
 
-        // 3. 3D ¼³Á¤À¸·Î º¹±¸ (´Ù½Ã ÄÑÁÖ´Â °ÍÀ» ÀØÁö ¸¶¼¼¿ä)
-        glEnable(GL_TEXTURE_2D); // ÅØ½ºÃ³ ´Ù½Ã ÄÑ±â (ÇÊ¿äÇÏ´Ù¸é)
-        glEnable(GL_LIGHTING);   // Á¶¸í ´Ù½Ã ÄÑ±â
+        // 3. 3D ì„¤ì •ìœ¼ë¡œ ë³µêµ¬ (ë‹¤ì‹œ ì¼œì£¼ëŠ” ê²ƒì„ ìŠì§€ ë§ˆì„¸ìš”)
+        glEnable(GL_TEXTURE_2D); // í…ìŠ¤ì²˜ ë‹¤ì‹œ ì¼œê¸° (í•„ìš”í•˜ë‹¤ë©´)
+        glEnable(GL_LIGHTING);   // ì¡°ëª… ë‹¤ì‹œ ì¼œê¸°
         glEnable(GL_DEPTH_TEST);
 
         glMatrixMode(GL_PROJECTION);
@@ -1430,36 +1432,36 @@ void drawScene() {
 }
 
 void Keyboard(unsigned char key, int x, int y) {
-    // 1. ÀÔ·Â ¸ğµåÀÏ ¶§ (±ÛÀÚ Å¸ÀÌÇÎ Áß)
+    // 1. ì…ë ¥ ëª¨ë“œì¼ ë•Œ (ê¸€ì íƒ€ì´í•‘ ì¤‘)
     if (isTyping) {
-        if (key == 13) { // [Enter] Å°: °Ë»ö ½ÇÇà
+        if (key == 13) { // [Enter] í‚¤: ê²€ìƒ‰ ì‹¤í–‰
             bool found = false;
             for (int i = 0; i < planets.size(); ++i) {
                 if (planets[i].name == inputString) {
                     targetPlanetIndex = i;
-                    cameraMode = 4; // Çà¼º ÃßÀû ¸ğµå
+                    cameraMode = 4; // í–‰ì„± ì¶”ì  ëª¨ë“œ
                     found = true;
                     break;
                 }
             }
             if (!found) {
                 printf("Planet '%s' not found!\n", inputString.c_str());
-                // ¸ø Ã£¾Ò¾îµµ ÀÏ´Ü Ã¢Àº ´İ°Å³ª, È¤Àº À¯ÁöÇÏ°Å³ª ¼±ÅÃ °¡´É
-                // ¿©±â¼± ±×³É ´İ°Ú½À´Ï´Ù.
+                // ëª» ì°¾ì•˜ì–´ë„ ì¼ë‹¨ ì°½ì€ ë‹«ê±°ë‚˜, í˜¹ì€ ìœ ì§€í•˜ê±°ë‚˜ ì„ íƒ ê°€ëŠ¥
+                // ì—¬ê¸°ì„  ê·¸ëƒ¥ ë‹«ê² ìŠµë‹ˆë‹¤.
             }
-            isTyping = false; // ÀÔ·ÂÃ¢ ´İ±â
-            inputString = ""; // ³»¿ë ÃÊ±âÈ­
+            isTyping = false; // ì…ë ¥ì°½ ë‹«ê¸°
+            inputString = ""; // ë‚´ìš© ì´ˆê¸°í™”
         }
-        else if (key == 8) { // [Backspace] Å°: ±ÛÀÚ Áö¿ì±â
+        else if (key == 8) { // [Backspace] í‚¤: ê¸€ì ì§€ìš°ê¸°
             if (inputString.length() > 0) {
                 inputString.pop_back();
             }
         }
-        else if (key == 27) { // [ESC] Å°: Ãë¼Ò
+        else if (key == 27) { // [ESC] í‚¤: ì·¨ì†Œ
             isTyping = false;
             inputString = "";
         }
-        else if (key >= 32 && key <= 126) { // ÀÏ¹İ ¹®ÀÚ ÀÔ·Â
+        else if (key >= 32 && key <= 126) { // ì¼ë°˜ ë¬¸ì ì…ë ¥
             inputString += (char)key;
         }
         return; 
@@ -1536,7 +1538,99 @@ GLvoid Reshape(int w, int h)
     glViewport(0, 0, w, h);
 }
 
+// ì„œë²„ ì ‘ì†ê³¼ ì°¸ê°€ ìŠ¹ì¸ ì •ë³´ë¥¼ ë³´ê´€í•œë‹¤.
+ConnectionCheck connection;
+// ê³µìš© ì „ì†¡ ëª¨ë“ˆì´ ê°€ì ¸ê°€ê¸° ì „ê¹Œì§€ ìµœì‹  ì…ë ¥ ë³¸ë¬¸ í•˜ë‚˜ë¥¼ ë³´ê´€í•œë‹¤.
+std::vector<char> pendingInputBody;
+// ë³„ë„ ì…ë ¥ êµ¬ì¡°ì²´ ëŒ€ì‹  Protocol.hì˜ ê³µìš© ìë£Œí˜•ì„ ì‚¬ìš©í•œë‹¤.
+static Protocol::PlayerInput clientInput{};
+// ì…ë ¥ì„ ê¸°ë¡í•œ í´ë¼ì´ì–¸íŠ¸ ì—…ë°ì´íŠ¸ ë²ˆí˜¸ë‹¤. ì‹¤ì œ ì‹œê³„ ì‹œê°„ì´ ì•„ë‹ˆë‹¤.
+std::uint32_t clientTick = 0;
+
+// í˜„ì¬ ì…ë ¥ì„ ì „ì†¡ ê·œì¹™ì— ë§ëŠ” 14ë°”ì´íŠ¸ ë³¸ë¬¸ìœ¼ë¡œ ë§Œë“ ë‹¤.
+// ì‹¤ì œ ì†Œì¼“ ì†¡ì‹ ì€ ê³µìš© ì „ì†¡ ëª¨ë“ˆì´ ì²˜ë¦¬í•œë‹¤.
+bool sendInput() {
+    // í—ˆìš©í•˜ì§€ ì•Šì€ ë²„íŠ¼ ë¹„íŠ¸, ìœ íš¨í•˜ì§€ ì•Šì€ ì‹¤ìˆ˜, ë²”ìœ„ë¥¼ ë²—ì–´ë‚œ ê°ë„ëŠ” ê±°ì ˆí•œë‹¤.
+    if ((clientInput.buttons & ~Protocol::INPUT_MASK) != 0 ||
+        !std::isfinite(clientInput.yaw) || !std::isfinite(clientInput.pitch) ||
+        clientInput.yaw < 0.0f || clientInput.yaw >= 360.0f ||
+        clientInput.pitch < -89.0f || clientInput.pitch > 89.0f) {
+        return false;
+    }
+
+    // ì‹¤ìˆ˜ì˜ ê°’ì´ ì•„ë‹Œ ë¹„íŠ¸ ëª¨ì–‘ì„ ë³µì‚¬í•˜ë ¤ë©´ ë‘ ìë£Œí˜•ì´ ëª¨ë‘ 4ë°”ì´íŠ¸ì—¬ì•¼ í•œë‹¤.
+    static_assert(sizeof(float) == sizeof(std::uint32_t), "Expected 32-bit float");
+    std::uint32_t yawBits = 0;
+    std::uint32_t pitchBits = 0;
+    // floatë¥¼ ì •ìˆ˜ë¡œ í˜•ë³€í™˜í•˜ì§€ ì•Šê³ , ì›ë˜ ì‹¤ìˆ˜ì˜ ë¹„íŠ¸ í‘œí˜„ì„ ê·¸ëŒ€ë¡œ ë³µì‚¬í•œë‹¤.
+    std::memcpy(&yawBits, &clientInput.yaw, sizeof(yawBits));
+    std::memcpy(&pitchBits, &clientInput.pitch, sizeof(pitchBits));
+
+    // htonlì€ 4ë°”ì´íŠ¸, htonsëŠ” 2ë°”ì´íŠ¸ ê°’ì„ ë„¤íŠ¸ì›Œí¬ ë°”ì´íŠ¸ ìˆœì„œë¡œ ë°”ê¾¼ë‹¤.
+    const std::uint32_t tick = htonl(clientInput.clientTick);
+    const std::uint16_t buttons = htons(clientInput.buttons);
+    yawBits = htonl(yawBits);
+    pitchBits = htonl(pitchBits);
+
+    // ì•„ì§ ê°€ì ¸ê°€ì§€ ì•Šì€ ì´ì „ ì…ë ¥ì€ ìµœì‹  ìƒíƒœë¡œ êµì²´í•œë‹¤.
+    // ë³¸ë¬¸ ë°°ì¹˜: ì—…ë°ì´íŠ¸ ë²ˆí˜¸ 0~3, ë²„íŠ¼ 4~5, ì¢Œìš° ê°ë„ 6~9, ìƒí•˜ ê°ë„ 10~13.
+    // êµ¬ì¡°ì²´ì— ìƒê¸¸ ìˆ˜ ìˆëŠ” íŒ¨ë”©ì„ ì œì™¸í•˜ê³  í•„ë“œë§Œ ìˆœì„œëŒ€ë¡œ ê¸°ë¡í•œë‹¤.
+    pendingInputBody.resize(Protocol::PLAYER_INPUT_BODY_SIZE);
+    std::memcpy(pendingInputBody.data(), &tick, sizeof(tick));
+    std::memcpy(pendingInputBody.data() + 4, &buttons, sizeof(buttons));
+    std::memcpy(pendingInputBody.data() + 6, &yawBits, sizeof(yawBits));
+    std::memcpy(pendingInputBody.data() + 10, &pitchBits, sizeof(pitchBits));
+    return true;
+}
+
+// ê³µìš© ì „ì†¡ ëª¨ë“ˆì´ ê²Œì„ ì‹œì‘ ìŠ¹ì¸(MATCH_START) í›„ ê²Œì„ ìŠ¤ë ˆë“œì—ì„œ í˜¸ì¶œí•  ì—°ê²°ì ì´ë‹¤.
+// ì „ì†¡ ëª¨ë“ˆì´ ì‹¤ì œ ìˆœë²ˆì„ ì „ë‹¬í•˜ë©´ ê¸°ì¡´ encodeFrame()ìœ¼ë¡œ 12ë°”ì´íŠ¸ í—¤ë”ë¥¼ ë¶™ì¸ë‹¤.
+// ë°˜í™˜ëœ í”„ë ˆì„ì˜ ì†Œì¼“ ì†¡ì‹ ê³¼ ë¶€ë¶„ ì†¡ì‹  ì²˜ë¦¬ëŠ” ì „ì†¡ ëª¨ë“ˆì´ ë‹´ë‹¹í•œë‹¤.
+bool takeClientInputFrame(std::uint32_t sequence, std::vector<char>& frame) {
+    if (pendingInputBody.empty() || sequence == 0) return false;
+    if (!encodeFrame(Protocol::MessageType::PLAYER_INPUT,
+        sequence, pendingInputBody, frame)) {
+        return false;
+    }
+    // ì „ì†¡ ëª¨ë“ˆì— ë„˜ê¸´ ë³¸ë¬¸ì€ ë¹„ì›Œ ê°™ì€ ì…ë ¥ì„ ë‹¤ì‹œ ê°€ì ¸ê°€ì§€ ì•Šê²Œ í•œë‹¤.
+    pendingInputBody.clear();
+    return true;
+}
+
+// ë§¤ ê²Œì„ í‹±ë§ˆë‹¤ í˜„ì¬ í‚¤ì™€ ë§ˆìš°ìŠ¤ ìƒíƒœë¥¼ ìˆ˜ì§‘í•´ sendInput()ì— ë„˜ê¸´ë‹¤.
+void runClientTick() {
+    // ì°¸ê°€ ìŠ¹ì¸ì„ ë°›ì§€ ì•Šì•˜ë‹¤ë©´ ëŒ€ê¸° ì¤‘ì¸ ì…ë ¥ê³¼ ì—…ë°ì´íŠ¸ ë²ˆí˜¸ë¥¼ ì´ˆê¸°í™”í•œë‹¤.
+    if (connection.sessionId() == 0) {
+        pendingInputBody.clear();
+        clientInput = {};
+        clientTick = 0;
+        return;
+    }
+
+    // ë§¤ë²ˆ 0ë¶€í„° ì‹œì‘í•˜ì—¬ í‚¤ë¥¼ ë—€ ìƒíƒœë„ ë°˜ì˜í•œë‹¤.
+    clientInput = {};
+    clientInput.clientTick = clientTick;
+    // í–‰ì„± ì´ë¦„ì„ ì…ë ¥í•˜ëŠ” ë™ì•ˆì—ëŠ” ì´ë™, ê°€ì†, ë°œì‚¬ ì…ë ¥ì„ ë³´ë‚´ì§€ ì•ŠëŠ”ë‹¤.
+    if (!isTyping) {
+        // ëˆ„ë¥¸ ë™ì‘ì˜ ë¹„íŠ¸ë¥¼ ORë¡œ í•©ì³ ë™ì‹œ ì…ë ¥ì„ í‘œí˜„í•œë‹¤. ì˜ˆ: Wì™€ Rì€ 1 | 16 = 17.
+        if (keyState['w']) clientInput.buttons |= static_cast<std::uint16_t>(Protocol::InputBits::Forward);
+        if (keyState['s']) clientInput.buttons |= static_cast<std::uint16_t>(Protocol::InputBits::Backward);
+        if (keyState['a']) clientInput.buttons |= static_cast<std::uint16_t>(Protocol::InputBits::Left);
+        if (keyState['d']) clientInput.buttons |= static_cast<std::uint16_t>(Protocol::InputBits::Right);
+        if (keyState['r']) clientInput.buttons |= static_cast<std::uint16_t>(Protocol::InputBits::Boost);
+        if (isLeftButtonDown) clientInput.buttons |= static_cast<std::uint16_t>(Protocol::InputBits::Fire);
+    }
+    // ì¢Œìš° ê°ë„ë¥¼ í”„ë¡œí† ì½œ ë²”ìœ„ì¸ 0 ì´ìƒ 360 ë¯¸ë§Œìœ¼ë¡œ ë§ì¶˜ë‹¤.
+    clientInput.yaw = std::fmod(shipAngle, 360.0f);
+    if (clientInput.yaw < 0.0f) clientInput.yaw += 360.0f;
+    clientInput.pitch = shipPitch;
+    // ì¤€ë¹„í•œ ì…ë ¥ ë³¸ë¬¸ì€ ì „ì†¡ ëª¨ë“ˆì´ ê°€ì ¸ê°€ë„ë¡ ë³´ê´€í•˜ê³  ë‹¤ìŒ í‹±ìœ¼ë¡œ ì§„í–‰í•œë‹¤.
+    sendInput();
+    ++clientTick;
+}
+
 void Timer(int value) {
+    runClientTick();
     globalTime += 0.5f;
     if (missileFireCounter > 0) {
         missileFireCounter--;
@@ -1557,7 +1651,6 @@ void Timer(int value) {
 
 int main(int argc, char** argv)
 {
-    static ConnectionCheck connection;
     connection.connectTo("127.0.0.1", 50000);
 
     glutInit(&argc, argv);
