@@ -120,6 +120,7 @@ int targetPlanetIndex = -1; // 현재 추적 중인 행성의 인덱스
 float mouse_x = 0.0f, mouse_y = 0.0f;
 
 
+std::uint64_t worldTick = 0; // 초기 월드는 0틱이며 월드를 갱신할 때마다 증가한다.
 float globalTime = 0.0f;
 // [추가] 자전/공전 제어 변수
 bool isRotating = true;  // 자전 스위치 (기본 켜짐)
@@ -1625,7 +1626,8 @@ void runClientTick() {
 }
 
 void runHostTick() {
-    globalTime += 0.5f;
+    ++worldTick;
+    globalTime = static_cast<float>(worldTick) * 0.5f;
     if (missileFireCounter > 0) {
         missileFireCounter--;
     }
