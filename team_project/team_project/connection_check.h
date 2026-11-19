@@ -11,6 +11,7 @@
 #include <chrono>
 #include <cstdint>
 #include <iostream>
+#include "netframe.h"
 #pragma comment(lib, "Ws2_32.lib")
 
 class ConnectionCheck {
@@ -104,23 +105,42 @@ private:
     }
 
     bool joinSession() {
-       std::array<unsigned char, 12> request{{
-            0, 1, 0, 1,
-            0, 0, 0, 0,
-            0, 0, 0, 1
-        }};
+        std::vector<char> request;
+        if (!encodeFrame(Protocol::MessageType::SESSION_JOIN_REQUEST, 1, {}, request))
+            return failed("join request encoding", WSAEINVAL);
         const auto deadline = Clock::now() + std::chrono::seconds(2);
-        if (!transferHandshakeBytes(request.data(), static_cast<int>(request.size()), true, deadline))
+        if (!transferHandshakeBytes(reinterpret_cast<unsigned char*>(request.data()),
+            static_cast<int>(request.size()), true, deadline)) return false;
+
+        std::array<unsigned char,
+            Protocol::HEADER_SIZE + Protocol::SESSION_JOIN_ACCEPT_BODY_SIZE> approval{};
+        if (!transferHandshakeBytes(approval.data(), static_cast<int>(Protocol::HEADER_SIZE), false, deadline))
             return false;
-        std::array<unsigned char, 20> approval{};
-        if (!transferHandshakeBytes(approval.data(), 12, false, deadline)) return false;
-        if (readNetworkU16(approval.data()) != 1 || readNetworkU16(approval.data() + 2) != 2 ||
-            readNetworkU32(approval.data() + 4) != 8 || readNetworkU32(approval.data() + 8) != 1)
+        // Validate the fixed JOIN body length before receiving the body.
+        if (readNetworkU16(approval.data() + Protocol::HeaderOffset::VERSION) != Protocol::VERSION ||
+            readNetworkU16(approval.data() + Protocol::HeaderOffset::TYPE) !=
+                static_cast<std::uint16_t>(Protocol::MessageType::SESSION_JOIN_ACCEPT) ||
+            readNetworkU32(approval.data() + Protocol::HeaderOffset::BODY_LENGTH) !=
+                Protocol::SESSION_JOIN_ACCEPT_BODY_SIZE ||
+            readNetworkU32(approval.data() + Protocol::HeaderOffset::SEQUENCE) != 1)
             return failed("join approval header", WSAEPROTONOSUPPORT);
-        if (!transferHandshakeBytes(approval.data() + 12, 8, false, deadline)) return false;
-        const std::uint32_t playerId = readNetworkU32(approval.data() + 12);
-        const std::uint32_t sessionId = readNetworkU32(approval.data() + 16);
-        if (playerId != 2 || sessionId == 0) return failed("join approval IDs", WSAEINVAL);
+        if (!transferHandshakeBytes(approval.data() + Protocol::HEADER_SIZE,
+            static_cast<int>(Protocol::SESSION_JOIN_ACCEPT_BODY_SIZE), false, deadline)) return false;
+
+        const char* first = reinterpret_cast<const char*>(approval.data());
+        std::vector<char> receiveBuffer(first, first + approval.size());
+        std::vector<DecodedFrame> frames;
+        if (!decodeFrames(receiveBuffer, frames) || frames.size() != 1 || !receiveBuffer.empty() ||
+            frames.front().header.type != Protocol::MessageType::SESSION_JOIN_ACCEPT ||
+            frames.front().header.sequence != 1 ||
+            frames.front().body.size() != Protocol::SESSION_JOIN_ACCEPT_BODY_SIZE)
+            return failed("join approval decoding", WSAEPROTONOSUPPORT);
+        const auto* body = reinterpret_cast<const unsigned char*>(frames.front().body.data());
+        const std::uint32_t playerId = readNetworkU32(body);
+        const std::uint32_t sessionId = readNetworkU32(body + 4);
+        // Protocol.h assigns remote IDs from 2 upward on each connection.
+        if (playerId <= Protocol::HOST_PLAYER_ID || sessionId == 0)
+            return failed("join approval IDs", WSAEINVAL);
         playerId_ = playerId;
         sessionId_ = sessionId;
         std::cout << "[Client] Session approved. Player ID: " << playerId_

@@ -2,7 +2,6 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 
-#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -10,27 +9,22 @@
 #include <iostream>
 #include <vector>
 #include <conio.h>
+#include "netframe.h"
 
 namespace {
-constexpr unsigned short kServerPort = 50000;
+constexpr unsigned short kServerPort = Protocol::PORT;
 constexpr std::size_t kMaxClients = 1; 
 
-constexpr std::uint32_t kHostPlayerId = 1;
-constexpr std::uint32_t kParticipantPlayerId = 2;
-constexpr std::uint16_t kProtocolVersion = 1;
-constexpr std::uint16_t kJoinRequestType = 1;
-constexpr std::uint16_t kJoinAcceptType = 2;
-constexpr std::size_t kHeaderBytes = 12;
-constexpr std::size_t kJoinApprovalBytes = 20;
+constexpr std::uint32_t kHostPlayerId = Protocol::HOST_PLAYER_ID;
 constexpr std::chrono::seconds kJoinRequestTimeout{5};
 
 struct ClientSession {
     SOCKET socket;
     std::uint32_t playerId;
     std::uint32_t sessionId;
-    std::array<unsigned char, kHeaderBytes> joinHeader{};
-    std::size_t headerBytesReceived = 0;
+    std::vector<char> receiveBuffer;
     bool joinValidated = false;
+    std::vector<char> approvalFrame;
     std::size_t approvalBytesSent = 0;
     std::chrono::steady_clock::time_point connectedAt = std::chrono::steady_clock::now();
 };
@@ -40,6 +34,7 @@ struct ServerResources {
     SOCKET listenSocket = INVALID_SOCKET;
     std::vector<ClientSession> clients;
     std::uint32_t nextSessionId = 1;
+    std::uint32_t nextPlayerId = Protocol::HOST_PLAYER_ID + 1;
 
     ~ServerResources() {
         for (const ClientSession& client : clients) closesocket(client.socket);
@@ -52,14 +47,6 @@ struct ServerResources {
     }
 };
 
-std::uint16_t readNetworkU16(const unsigned char* bytes) {
-    return static_cast<std::uint16_t>((static_cast<std::uint16_t>(bytes[0]) << 8) | bytes[1]);
-}
-
-std::uint32_t readNetworkU32(const unsigned char* bytes) {
-    return (static_cast<std::uint32_t>(readNetworkU16(bytes)) << 16) | readNetworkU16(bytes + 2);
-}
-
 void writeNetworkU16(unsigned char* bytes, std::uint16_t value) {
     bytes[0] = static_cast<unsigned char>(value >> 8);
     bytes[1] = static_cast<unsigned char>(value);
@@ -71,17 +58,11 @@ void writeNetworkU32(unsigned char* bytes, std::uint32_t value) {
 }
 
 bool sendJoinApproval(ClientSession& client) {
-    if (client.approvalBytesSent == kJoinApprovalBytes) return true;
-    std::array<unsigned char, kJoinApprovalBytes> approval{};
-    writeNetworkU16(approval.data(), kProtocolVersion);
-    writeNetworkU16(approval.data() + 2, kJoinAcceptType);
-    writeNetworkU32(approval.data() + 4, 8);
-    writeNetworkU32(approval.data() + 8, 1);
-    writeNetworkU32(approval.data() + 12, client.playerId);
-    writeNetworkU32(approval.data() + 16, client.sessionId);
+    if (client.approvalFrame.empty()) return false;
+    if (client.approvalBytesSent == client.approvalFrame.size()) return true;
     const int sent = send(client.socket,
-        reinterpret_cast<const char*>(approval.data() + client.approvalBytesSent),
-        static_cast<int>(kJoinApprovalBytes - client.approvalBytesSent), 0);
+        client.approvalFrame.data() + client.approvalBytesSent,
+        static_cast<int>(client.approvalFrame.size() - client.approvalBytesSent), 0);
     if (sent == SOCKET_ERROR) {
         const int error = WSAGetLastError();
         if (error == WSAEWOULDBLOCK) return true;
@@ -90,7 +71,7 @@ bool sendJoinApproval(ClientSession& client) {
     }
     if (sent == 0) return false;
     client.approvalBytesSent += static_cast<std::size_t>(sent);
-    if (client.approvalBytesSent == kJoinApprovalBytes) {
+    if (client.approvalBytesSent == client.approvalFrame.size()) {
         std::cout << "[Server] Client approved. Player ID: " << client.playerId
             << " | Session ID: " << client.sessionId << std::endl;
     }
@@ -98,32 +79,42 @@ bool sendJoinApproval(ClientSession& client) {
 }
 
 bool consumeJoinRequest(ClientSession& client, const char* bytes, std::size_t count) {
-    if (client.joinValidated || count > kHeaderBytes - client.headerBytesReceived) {
-        std::cerr << "[Server] Unexpected additional session data." << std::endl;
+    // This handler owns admission only. Gameplay dispatch is the next host step.
+    if (client.joinValidated) {
+        std::cerr << "[Server] Post-JOIN message handling is not implemented yet." << std::endl;
         return false;
     }
-    std::memcpy(client.joinHeader.data() + client.headerBytesReceived, bytes, count);
-    client.headerBytesReceived += count;
-    if (client.headerBytesReceived < kHeaderBytes) return true;
-
-    // Header: version(u16), type(u16), bodyBytes(u32), sequence(u32), big endian.
-    const unsigned char* header = client.joinHeader.data();
-    if (readNetworkU16(header) != kProtocolVersion) {
-        std::cerr << "[Server] Join rejected: protocol version mismatch." << std::endl;
+    // A JOIN request has no body. Keep the original admission buffer limit.
+    if (count > Protocol::HEADER_SIZE - client.receiveBuffer.size()) {
+        std::cerr << "[Server] Join rejected: request must contain one empty-body frame." << std::endl;
         return false;
     }
-    if (readNetworkU16(header + 2) != kJoinRequestType) {
-        std::cerr << "[Server] Join rejected: SESSION_JOIN_REQUEST must come first." << std::endl;
+    client.receiveBuffer.insert(client.receiveBuffer.end(), bytes, bytes + count);
+    std::vector<DecodedFrame> frames;
+    if (!decodeFrames(client.receiveBuffer, frames)) {
+        std::cerr << "[Server] Join rejected: invalid protocol header." << std::endl;
         return false;
     }
-    if (readNetworkU32(header + 4) != 0) {
-        std::cerr << "[Server] Join rejected: request body must be empty." << std::endl;
+    if (frames.empty()) {
+        // decodeFrames also returns true for a partial header/body.
+        if (client.receiveBuffer.size() == Protocol::HEADER_SIZE) {
+            std::cerr << "[Server] Join rejected: request body must be empty." << std::endl;
+            return false;
+        }
+        return true;
+    }
+    if (frames.size() != 1 || !client.receiveBuffer.empty() ||
+        frames.front().header.type != Protocol::MessageType::SESSION_JOIN_REQUEST ||
+        frames.front().header.sequence != 1 ||
+        frames.front().body.size() != Protocol::SESSION_JOIN_REQUEST_BODY_SIZE) {
+        std::cerr << "[Server] Join rejected: expected SESSION_JOIN_REQUEST, empty body, sequence 1." << std::endl;
         return false;
     }
-    if (readNetworkU32(header + 8) != 1) {
-        std::cerr << "[Server] Join rejected: first sequence must be 1." << std::endl;
+    std::vector<char> body(Protocol::SESSION_JOIN_ACCEPT_BODY_SIZE);
+    writeNetworkU32(reinterpret_cast<unsigned char*>(body.data()), client.playerId);
+    writeNetworkU32(reinterpret_cast<unsigned char*>(body.data() + 4), client.sessionId);
+    if (!encodeFrame(Protocol::MessageType::SESSION_JOIN_ACCEPT, 1, body, client.approvalFrame))
         return false;
-    }
     client.joinValidated = true;
     std::cout << "[Server] Join request validated. Player ID: " << client.playerId
         << " | Session ID: " << client.sessionId << std::endl;
@@ -144,9 +135,9 @@ void acceptClient(ServerResources& server) {
         return;
     }
   
-    if (server.nextSessionId == 0) {
+    if (server.nextSessionId == 0 || server.nextPlayerId <= Protocol::HOST_PLAYER_ID) {
         closesocket(client);
-        std::cerr << "[Server] Session ID limit reached." << std::endl;
+        std::cerr << "[Server] Player/session ID limit reached." << std::endl;
         return;
     }
     u_long nonblocking = 1;
@@ -155,7 +146,7 @@ void acceptClient(ServerResources& server) {
         closesocket(client);
         return;
     }
-    const ClientSession newClient{client, kParticipantPlayerId, server.nextSessionId++};
+    const ClientSession newClient{client, server.nextPlayerId++, server.nextSessionId++};
     server.clients.push_back(newClient);
     char ip[INET_ADDRSTRLEN]{};
     inet_ntop(AF_INET, &peer.sin_addr, ip, sizeof(ip));
@@ -222,7 +213,7 @@ int main() {
         FD_SET(server.listenSocket, &readable);
         for (const ClientSession& client : server.clients) {
             FD_SET(client.socket, &readable);
-            if (client.joinValidated && client.approvalBytesSent < kJoinApprovalBytes)
+            if (client.joinValidated && client.approvalBytesSent < client.approvalFrame.size())
                 FD_SET(client.socket, &writable);
         }
         timeval timeout{0, 100000};

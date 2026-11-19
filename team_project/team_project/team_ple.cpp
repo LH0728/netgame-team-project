@@ -1651,7 +1651,7 @@ void Timer(int value) {
 
 int main(int argc, char** argv)
 {
-    connection.connectTo("127.0.0.1", 50000);
+    connection.connectTo("127.0.0.1", Protocol::PORT);
 
     glutInit(&argc, argv);
     int screenWidth = glutGet(GLUT_SCREEN_WIDTH);
