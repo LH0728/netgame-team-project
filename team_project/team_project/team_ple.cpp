@@ -1599,14 +1599,6 @@ bool takeClientInputFrame(std::uint32_t sequence, std::vector<char>& frame) {
 
 // 매 게임 틱마다 현재 키와 마우스 상태를 수집해 sendInput()에 넘긴다.
 void runClientTick() {
-    // 참가 승인을 받지 않았다면 대기 중인 입력과 업데이트 번호를 초기화한다.
-    if (connection.sessionId() == 0) {
-        pendingInputBody.clear();
-        clientInput = {};
-        clientTick = 0;
-        return;
-    }
-
     // 매번 0부터 시작하여 키를 뗀 상태도 반영한다.
     clientInput = {};
     clientInput.clientTick = clientTick;
@@ -1646,8 +1638,15 @@ void runHostTick() {
 }
 
 void Timer(int value) {
-    runClientTick();
-    runHostTick();
+    if (connection.sessionId() != 0) {
+        runClientTick();
+    } else {
+        // 단독 플레이에서는 참가 입력을 비우고 로컬 월드를 진행한다.
+        pendingInputBody.clear();
+        clientInput = {};
+        clientTick = 0;
+        runHostTick();
+    }
     updateParticles();
     glutPostRedisplay();
     glutTimerFunc(16, Timer, 0);
