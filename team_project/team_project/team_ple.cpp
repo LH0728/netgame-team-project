@@ -163,7 +163,8 @@ void spawnTrail(glm::vec3 pos, glm::vec3 color);
 
 void updateParticles();
 void updateGameLogic();
-void updateMovement();
+void updateMovement(glm::vec3& position, float yaw, float pitch,
+    int forwardInput, int strafeInput, bool boosting);
 void fireMissile();
 
 void drawScene();
@@ -591,39 +592,33 @@ void updateParticles() {
     }
 }
 
-void updateMovement() {
-    glm::vec3 moveDir(0.0f);
+void updateMovement(glm::vec3& position, float yaw, float pitch,
+    int forwardInput, int strafeInput, bool boosting) {
     glm::vec3 front;
-    front.x = sin(glm::radians(shipAngle)) * cos(glm::radians(shipPitch));
-    front.y = sin(glm::radians(shipPitch));
-    front.z = cos(glm::radians(shipAngle)) * cos(glm::radians(shipPitch));
+    front.x = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+    front.y = sin(glm::radians(pitch));
+    front.z = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
     front = glm::normalize(front);
     glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0, 1, 0)));
-    glm::vec3 up = glm::normalize(glm::cross(right, front));
-
-    if (keyState['w']) moveDir += front;
-    if (keyState['s']) moveDir -= front;
-    if (keyState['a']) moveDir -= right;
-    if (keyState['d']) moveDir += right;
-    /*if (keyState['q']) moveDir += up;
-    if (keyState['e']) moveDir -= up;*/
+    glm::vec3 moveDir = front * static_cast<float>(forwardInput)
+        + right * static_cast<float>(strafeInput);
 
     if (glm::length(moveDir) > 0.0f) {
         moveDir = glm::normalize(moveDir);
         float currentSpeed = 0.5f;
         glm::vec3 engineColor(0.2f, 0.6f, 1.0f);
 
-        if (keyState['r']) {
+        if (boosting) {
             currentSpeed = 1.5f;
             engineColor = glm::vec3(1.0f, 0.3f, 0.1f);
         }
 
-        shipPos += moveDir * currentSpeed;
+        position += moveDir * currentSpeed;
 
         glm::vec3 shipBack = glm::normalize(front) * -1.5f;
         glm::vec3 engineOffset = glm::cross(glm::normalize(shipBack * -1.0f), glm::vec3(0, 1, 0)) * 0.5f;
-        spawnTrail(shipPos + shipBack + engineOffset, engineColor);
-        spawnTrail(shipPos + shipBack - engineOffset, engineColor);
+        spawnTrail(position + shipBack + engineOffset, engineColor);
+        spawnTrail(position + shipBack - engineOffset, engineColor);
     }
 }
 
@@ -1641,7 +1636,9 @@ void runHostTick() {
     if (isRotating) rotateTime += 0.5f;
     if (isOrbiting) orbitTime += 0.5f;
 
-    updateMovement();
+    const int forwardInput = keyState['w'] - keyState['s'];
+    const int strafeInput = keyState['d'] - keyState['a'];
+    updateMovement(shipPos, shipAngle, shipPitch, forwardInput, strafeInput, keyState['r']);
     updateGameLogic();
 }
 
