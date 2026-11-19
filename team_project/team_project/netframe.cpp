@@ -1,6 +1,7 @@
 #include <winsock2.h>
 #include <cstring>
 #include <cstdint>
+#include <utility>
 #include "netframe.h"
 
 #pragma comment(lib, "Ws2_32.lib")
@@ -30,7 +31,7 @@ bool encodeFrame(
     std::uint32_t netSequence = htonl(sequence);           // 4바이트
 
     // 5. 변환한 값을 정해진 헤더 위치에 복사
-    std::memcpy(&outFrame[Protocol::HeaderOffset::VERSION], &netVersion, sizeof(netVersion));
+    std::memcpy(&outFrame[Protocol::HeaderOffset::VERSION], &netVersion, sizeof(netVersion)); 
     std::memcpy(&outFrame[Protocol::HeaderOffset::TYPE], &netType, sizeof(netType));
     std::memcpy(&outFrame[Protocol::HeaderOffset::BODY_LENGTH], &netBodyLength, sizeof(netBodyLength));
     std::memcpy(&outFrame[Protocol::HeaderOffset::SEQUENCE], &netSequence, sizeof(netSequence));
@@ -41,5 +42,115 @@ bool encodeFrame(
     }
 
     // 7. true 반환
+    return true;
+}
+
+
+bool decodeFrames(
+    std::vector<char>& receiveBuffer,
+    std::vector<DecodedFrame>& outFrames)
+{
+    // 1. 이전 호출의 출력 지우기
+    outFrames.clear();
+
+    // 이번 호출에서 처리한 바이트 수
+    std::size_t offset = 0;
+
+    while (true) {
+        const std::size_t remaining =
+            receiveBuffer.size() - offset;
+
+        // 2. 헤더 12바이트가 없으면 다음 수신을 기다림
+        if (remaining < Protocol::HEADER_SIZE) {
+            break;
+        }
+
+        const char* header = receiveBuffer.data() + offset;
+
+        // 3. 헤더의 각 필드를 복사
+        std::uint16_t netVersion;
+        std::uint16_t netType;
+        std::uint32_t netBodyLength;
+        std::uint32_t netSequence;
+
+        std::memcpy(
+            &netVersion,
+            header + Protocol::HeaderOffset::VERSION,
+            sizeof(netVersion));
+
+        std::memcpy(
+            &netType,
+            header + Protocol::HeaderOffset::TYPE,
+            sizeof(netType));
+
+        std::memcpy(
+            &netBodyLength,
+            header + Protocol::HeaderOffset::BODY_LENGTH,
+            sizeof(netBodyLength));
+
+        std::memcpy(
+            &netSequence,
+            header + Protocol::HeaderOffset::SEQUENCE,
+            sizeof(netSequence));
+
+        // 4. 네트워크 바이트 순서 -> 호스트 바이트 순서
+        const std::uint16_t version = ntohs(netVersion);
+        const std::uint16_t type = ntohs(netType);
+        const std::uint32_t bodyLength = ntohl(netBodyLength);
+        const std::uint32_t sequence = ntohl(netSequence);
+
+        // 현재 MessageType은 1~12가 빠짐없이 정의되어 있음
+        const bool validType =
+            type >= static_cast<std::uint16_t>(
+                Protocol::MessageType::SESSION_JOIN_REQUEST) &&
+            type <= static_cast<std::uint16_t>(
+                Protocol::MessageType::SESSION_CLOSE);
+
+        // 5. 공통 헤더 검증
+        if (version != Protocol::VERSION ||
+            !validType ||
+            bodyLength > Protocol::MAX_BODY_SIZE ||
+            sequence == 0)
+        {
+            // 오류가 있으면 이번 호출의 결과는 사용하지 않음
+            outFrames.clear();
+            return false;
+        }
+
+        const std::size_t frameSize =
+            Protocol::HEADER_SIZE +
+            static_cast<std::size_t>(bodyLength);
+
+        // 6. 본문이 아직 다 도착하지 않았으면 기다림
+        if (remaining < frameSize) {
+            break;
+        }
+
+        // 7. 완성된 프레임의 헤더 저장
+        DecodedFrame frame;
+
+        frame.header.version = version;
+        frame.header.type = static_cast<Protocol::MessageType>(type);
+        frame.header.bodyLength = bodyLength;
+        frame.header.sequence = sequence;
+
+        // 본문은 아직 해석하지 않고 바이트 그대로 저장
+        const char* body = header + Protocol::HEADER_SIZE;
+        frame.body.assign(body, body + bodyLength);
+
+        outFrames.push_back(std::move(frame));
+
+        // 8. 다음 프레임 위치로 이동
+        offset += frameSize;
+    }
+
+    // 9. 처리한 데이터만 삭제
+    // 미완성 헤더/본문은 버퍼에 남아 다음 수신과 합쳐짐
+    using Difference = std::vector<char>::difference_type;
+
+    receiveBuffer.erase(
+        receiveBuffer.begin(),
+        receiveBuffer.begin() + static_cast<Difference>(offset));
+
     return true;
 }
