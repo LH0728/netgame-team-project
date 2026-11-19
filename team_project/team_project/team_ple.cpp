@@ -1629,8 +1629,7 @@ void runClientTick() {
     ++clientTick;
 }
 
-void Timer(int value) {
-    runClientTick();
+void runHostTick() {
     globalTime += 0.5f;
     if (missileFireCounter > 0) {
         missileFireCounter--;
@@ -1644,6 +1643,11 @@ void Timer(int value) {
 
     updateMovement();
     updateGameLogic();
+}
+
+void Timer(int value) {
+    runClientTick();
+    runHostTick();
     updateParticles();
     glutPostRedisplay();
     glutTimerFunc(16, Timer, 0);
