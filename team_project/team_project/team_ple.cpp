@@ -1601,6 +1601,15 @@ bool takeClientInputFrame(std::uint32_t sequence, std::vector<char>& frame) {
     return true;
 }
 
+// 스냅샷과 참가 입력에서 같은 기체 좌표와 방향 기준을 사용한다.
+Protocol::PlayerState captureLocalPlayerState(std::uint32_t playerId) {
+    float yaw = std::fmod(shipAngle, 360.0f);
+    if (yaw < 0.0f) yaw += 360.0f;
+    if (yaw == 360.0f) yaw = 0.0f; // 작은 음수가 반올림되면 360이 될 수 있다.
+
+    return { playerId, { shipPos.x, shipPos.y, shipPos.z }, yaw, shipPitch };
+}
+
 // 매 게임 틱마다 현재 키와 마우스 상태를 수집해 sendInput()에 넘긴다.
 void runClientTick() {
     // 참가 승인을 받지 않았다면 대기 중인 입력과 업데이트 번호를 초기화한다.
@@ -1624,10 +1633,9 @@ void runClientTick() {
         if (keyState['r']) clientInput.buttons |= static_cast<std::uint16_t>(Protocol::InputBits::Boost);
         if (isLeftButtonDown) clientInput.buttons |= static_cast<std::uint16_t>(Protocol::InputBits::Fire);
     }
-    // 좌우 각도를 프로토콜 범위인 0 이상 360 미만으로 맞춘다.
-    clientInput.yaw = std::fmod(shipAngle, 360.0f);
-    if (clientInput.yaw < 0.0f) clientInput.yaw += 360.0f;
-    clientInput.pitch = shipPitch;
+    const auto player = captureLocalPlayerState(connection.playerId());
+    clientInput.yaw = player.yaw;
+    clientInput.pitch = player.pitch;
     // 준비한 입력 본문은 전송 모듈이 가져가도록 보관하고 다음 틱으로 진행한다.
     sendInput();
     ++clientTick;
