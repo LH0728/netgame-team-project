@@ -11,6 +11,9 @@
 #include <cmath>
 #include <cstring>
 #include <algorithm>
+#include <initializer_list>
+#include <limits>
+#include <unordered_set>
 
 #include <gl/glew.h>
 #include <gl/freeglut.h>
@@ -1682,6 +1685,90 @@ WorldSnapshot captureWorldSnapshot() {
     header.projectileCount = static_cast<std::uint32_t>(snapshot.projectiles.size());
     header.planetCount = static_cast<std::uint32_t>(snapshot.planets.size());
     return snapshot;
+}
+
+static void appendSnapshotU32(std::vector<char>& bytes, std::uint32_t value) {
+    const std::uint32_t networkValue = htonl(value);
+    const char* first = reinterpret_cast<const char*>(&networkValue);
+    bytes.insert(bytes.end(), first, first + sizeof(networkValue));
+}
+
+static bool appendSnapshotFloats(std::vector<char>& bytes, std::initializer_list<float> values) {
+    static_assert(sizeof(float) == sizeof(std::uint32_t) && std::numeric_limits<float>::is_iec559,
+        "Snapshot requires IEEE 754 binary32");
+    for (float value : values) {
+        if (!std::isfinite(value)) return false;
+        std::uint32_t bits;
+        std::memcpy(&bits, &value, sizeof(bits));
+        appendSnapshotU32(bytes, bits);
+    }
+    return true;
+}
+
+// WORLD_SNAPSHOT 논리 본문 순서: 헤더, 기체, 활성 미사일, 행성. 조각 헤더는 전송 시 붙인다.
+bool encodeSnapshotBody(const WorldSnapshot& snapshot, std::vector<char>& body) {
+    const auto& header = snapshot.header;
+    const auto& world = header.world;
+    if (header.playerCount != snapshot.players.size() ||
+        header.projectileCount != snapshot.projectiles.size() ||
+        header.planetCount != snapshot.planets.size() ||
+        header.projectileCount > Protocol::MAX_PROJECTILES || header.planetCount > Protocol::MAX_PLANETS) {
+        return false;
+    }
+    const std::uint64_t bodySize = Protocol::WORLD_SNAPSHOT_HEADER_SIZE
+        + std::uint64_t(header.playerCount) * Protocol::PLAYER_STATE_SIZE
+        + std::uint64_t(header.projectileCount) * Protocol::PROJECTILE_STATE_SIZE
+        + std::uint64_t(header.planetCount) * Protocol::PLANET_STATE_SIZE;
+    if (bodySize > UINT32_MAX || bodySize > body.max_size()) return false;
+
+    if (world.phase > Protocol::WorldPhase::Cleared || world.rotating > 1 || world.orbiting > 1 ||
+        world.globalTime < 0 || world.rotateTime < 0 || world.orbitTime < 0 || world.sunExplosionTime < 0) {
+        return false;
+    }
+    std::vector<char> bytes;
+    bytes.reserve(static_cast<std::size_t>(bodySize));
+    appendSnapshotU32(bytes, header.serverTick);
+    bytes.push_back(static_cast<char>(world.phase));
+    bytes.push_back(static_cast<char>(world.rotating));
+    bytes.push_back(static_cast<char>(world.orbiting));
+    if (!appendSnapshotFloats(bytes, { world.globalTime, world.rotateTime, world.orbitTime, world.sunExplosionTime })) {
+        return false;
+    }
+    appendSnapshotU32(bytes, header.playerCount);
+    appendSnapshotU32(bytes, header.projectileCount);
+    appendSnapshotU32(bytes, header.planetCount);
+
+    std::unordered_set<std::uint32_t> seenIds;
+    for (const auto& player : snapshot.players) {
+        if (player.playerId == 0 || !seenIds.insert(player.playerId).second ||
+            player.yaw < 0 || player.yaw >= 360 || player.pitch < -89 || player.pitch > 89) return false;
+        appendSnapshotU32(bytes, player.playerId);
+        if (!appendSnapshotFloats(bytes, { player.position.x, player.position.y, player.position.z,
+            player.yaw, player.pitch })) return false;
+    }
+    seenIds.clear();
+    for (const auto& projectile : snapshot.projectiles) {
+        if (projectile.projectileId == 0 || !seenIds.insert(projectile.projectileId).second ||
+            projectile.ownerPlayerId == 0 || projectile.lifeTime < 0) return false;
+        appendSnapshotU32(bytes, projectile.projectileId);
+        appendSnapshotU32(bytes, projectile.ownerPlayerId);
+        if (!appendSnapshotFloats(bytes, { projectile.position.x, projectile.position.y, projectile.position.z,
+            projectile.velocity.x, projectile.velocity.y, projectile.velocity.z, projectile.lifeTime })) return false;
+    }
+    seenIds.clear();
+    for (const auto& planet : snapshot.planets) {
+        if (planet.planetId == 0 || planet.planetId > Protocol::MAX_PLANETS || !seenIds.insert(planet.planetId).second ||
+            planet.active > 1 || planet.health < 0 || planet.distance < 0 || planet.size < 0 || planet.initialSize < 0) {
+            return false;
+        }
+        appendSnapshotU32(bytes, planet.planetId);
+        if (!appendSnapshotFloats(bytes, { planet.distance, planet.size, planet.initialSize,
+            planet.orbitSpeed, planet.selfRotateSpeed, planet.axisTilt })) return false;
+        appendSnapshotU32(bytes, static_cast<std::uint32_t>(planet.health));
+        bytes.push_back(static_cast<char>(planet.active));
+    }
+    body.swap(bytes);
+    return true;
 }
 
 // 매 게임 틱마다 현재 키와 마우스 상태를 수집해 sendInput()에 넘긴다.
