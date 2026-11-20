@@ -123,6 +123,8 @@ int targetPlanetIndex = -1; // 현재 추적 중인 행성의 인덱스
 float mouse_x = 0.0f, mouse_y = 0.0f;
 
 
+constexpr unsigned int worldTickMs = 16;
+constexpr float worldTickSeconds = worldTickMs / 1000.0f;
 std::uint64_t worldTick = 0; // 초기 월드는 0틱이며 월드를 갱신할 때마다 증가한다.
 float globalTime = 0.0f;
 // [추가] 자전/공전 제어 변수
@@ -802,6 +804,7 @@ void updateGameLogic() {
             continue;
         }
         missiles[i].position += missiles[i].velocity;
+        missiles[i].lifeTime += worldTickSeconds;
         if (glm::length(missiles[i].position) > missileRange) missiles.erase(missiles.begin() + i);
         else i++;
     }
@@ -1610,6 +1613,24 @@ Protocol::PlayerState captureLocalPlayerState(std::uint32_t playerId) {
     return { playerId, { shipPos.x, shipPos.y, shipPos.z }, yaw, shipPitch };
 }
 
+std::vector<Protocol::ProjectileState> captureActiveProjectiles() {
+    std::vector<Protocol::ProjectileState> projectiles;
+    projectiles.reserve(missiles.size());
+    for (const auto& missile : missiles) {
+        if (!missile.active) continue;
+
+        // 게임은 틱당 이동량을 쓰고 스냅샷은 초당 속도를 쓴다.
+        const glm::vec3 velocityPerSecond = missile.velocity / worldTickSeconds;
+        projectiles.push_back({
+            missile.projectileId, missile.ownerPlayerId,
+            { missile.position.x, missile.position.y, missile.position.z },
+            { velocityPerSecond.x, velocityPerSecond.y, velocityPerSecond.z },
+            missile.lifeTime
+        });
+    }
+    return projectiles;
+}
+
 // 매 게임 틱마다 현재 키와 마우스 상태를 수집해 sendInput()에 넘긴다.
 void runClientTick() {
     // 참가 승인을 받지 않았다면 대기 중인 입력과 업데이트 번호를 초기화한다.
@@ -1667,7 +1688,7 @@ void Timer(int value) {
     }
     updateParticles();
     glutPostRedisplay();
-    glutTimerFunc(16, Timer, 0);
+    glutTimerFunc(worldTickMs, Timer, 0);
 }
 
 int main(int argc, char** argv)
@@ -1714,7 +1735,7 @@ int main(int argc, char** argv)
     glutMouseFunc(Mouse);
     glutPassiveMotionFunc(Motion);
     glutMotionFunc(Motion);
-    glutTimerFunc(16, Timer, 0);
+    glutTimerFunc(worldTickMs, Timer, 0);
     glutSetCursor(GLUT_CURSOR_NONE);
 
     glutMainLoop();
