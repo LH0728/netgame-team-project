@@ -1,6 +1,7 @@
 ﻿#define _CRT_SECURE_NO_WARNINGS
 #include "connection_check.h"
 #include "netframe.h"
+#include "snapshot_sender.h"
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h" // 프로젝트 폴더에 stb_image.h 파일이 있어야 합니다.
 
@@ -1771,6 +1772,43 @@ bool encodeSnapshotBody(const WorldSnapshot& snapshot, std::vector<char>& body) 
     return true;
 }
 
+struct PublishedWorldSnapshot {
+    std::uint32_t id;
+    std::vector<char> body;
+};
+
+static std::shared_ptr<const PublishedWorldSnapshot> latestSnapshot;
+
+void publishSnapshot() {
+    auto next = std::make_shared<PublishedWorldSnapshot>();
+    if (!encodeSnapshotBody(captureWorldSnapshot(), next->body)) return;
+    next->id = latestSnapshot && latestSnapshot->id != UINT32_MAX ? latestSnapshot->id + 1 : 1;
+    latestSnapshot = next;
+}
+
+bool SnapshotSender::takeFrame(std::uint32_t sequence, std::vector<char>& frame) {
+    if (sequence == 0 || !latestSnapshot) return false;
+    // 나머지 조각이 있으면 같은 본문을 끝까지 넘긴 뒤 최신 스냅샷으로 넘어간다.
+    const bool continuing = snapshot_ && offset_ < snapshot_->body.size();
+    if (!continuing && snapshot_ == latestSnapshot) return false;
+    const auto source = continuing ? snapshot_ : latestSnapshot;
+    const std::size_t offset = continuing ? offset_ : 0;
+    const std::size_t count = std::min(Protocol::MAX_INIT_CHUNK_DATA_SIZE, source->body.size() - offset);
+
+    std::vector<char> chunk;
+    chunk.reserve(Protocol::WORLD_INIT_CHUNK_HEADER_SIZE + count);
+    appendSnapshotU32(chunk, source->id);
+    appendSnapshotU32(chunk, static_cast<std::uint32_t>(source->body.size()));
+    appendSnapshotU32(chunk, static_cast<std::uint32_t>(offset));
+    const auto first = source->body.begin() + offset;
+    chunk.insert(chunk.end(), first, first + count);
+    if (!encodeFrame(Protocol::MessageType::WORLD_SNAPSHOT, sequence, chunk, frame)) return false;
+
+    snapshot_ = source;
+    offset_ = offset + count;
+    return true;
+}
+
 // 매 게임 틱마다 현재 키와 마우스 상태를 수집해 sendInput()에 넘긴다.
 void runClientTick() {
     // 참가 승인을 받지 않았다면 대기 중인 입력과 업데이트 번호를 초기화한다.
@@ -1819,6 +1857,15 @@ void runHostTick() {
     const int strafeInput = keyState['d'] - keyState['a'];
     updateMovement(shipPos, shipAngle, shipPitch, forwardInput, strafeInput, keyState['r']);
     updateGameLogic();
+
+    // 한 틱은 16ms다. 남은 시간을 이월해 시뮬레이션 1초당 20회 발행한다.
+    constexpr unsigned int snapshotIntervalMs = 50;
+    static unsigned int elapsedSnapshotMs = 0;
+    elapsedSnapshotMs += worldTickMs;
+    if (elapsedSnapshotMs >= snapshotIntervalMs) {
+        elapsedSnapshotMs -= snapshotIntervalMs;
+        publishSnapshot();
+    }
 }
 
 void Timer(int value) {
