@@ -56,6 +56,8 @@ struct AsteroidData {
 };
 
 struct MissileData {
+    std::uint32_t projectileId;
+    std::uint32_t ownerPlayerId;
     glm::vec3 position;
     glm::vec3 velocity;
     float yaw;   // [변경] 좌우 회전 각도 (기존 angle 대체)
@@ -96,6 +98,7 @@ GLuint backgroundTex;
 std::vector<PlanetData> planets;
 std::vector<AsteroidData> asteroids;
 std::vector<MissileData> missiles;
+std::uint32_t nextProjectileId = 1; // 0은 미지정이며 이미 사용한 번호는 재사용하지 않는다.
 std::vector<Particle> particles;
 
 const int asteroidCount = 1500;
@@ -680,6 +683,8 @@ void drawCrosshair() {
 }
 
 void fireMissile() {
+    if (nextProjectileId == 0) return;
+
     GLint viewport[4]; glGetIntegerv(GL_VIEWPORT, viewport);
     glm::vec3 cameraPos, cameraTarget, cameraUp(0, 1, 0);
     glm::vec3 shipDir;
@@ -734,6 +739,8 @@ void fireMissile() {
 
     // ★★★ [수정 2] 3D 회전 각도(Yaw, Pitch) 계산 ★★★
     MissileData m;
+    m.projectileId = nextProjectileId;
+    m.ownerPlayerId = Protocol::HOST_PLAYER_ID;
     glm::vec3 fireDir = glm::normalize(targetPos - shipPos);
     m.position = shipPos + fireDir * 2.0f;
     m.velocity = fireDir * missileSpeed;
@@ -746,6 +753,7 @@ void fireMissile() {
     m.lifeTime = 0.0f;
     m.active = true;
     missiles.push_back(m);
+    ++nextProjectileId;
 }
 
 
