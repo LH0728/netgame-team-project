@@ -125,6 +125,8 @@ float mouse_x = 0.0f, mouse_y = 0.0f;
 
 constexpr unsigned int worldTickMs = 16;
 constexpr float worldTickSeconds = worldTickMs / 1000.0f;
+constexpr float planetTimeStep = 0.5f; // 한 틱 동안 공전·자전 시계가 전진하는 양
+constexpr float planetSpinMultiplier = 5.0f;
 std::uint64_t worldTick = 0; // 초기 월드는 0틱이며 월드를 갱신할 때마다 증가한다.
 float globalTime = 0.0f;
 // [추가] 자전/공전 제어 변수
@@ -815,8 +817,7 @@ void updateGameLogic() {
         // [추가] 행성과의 충돌 처리
         // ----------------------------------------------------
         for (auto& p : planets) {
-            // 태양은 제외 (거리 0.0f인 경우)
-            if (p.distance == 0.0f) continue;
+            if (!p.active || p.distance == 0.0f) continue;
 
             // 행성의 현재 위치 계산 (공전 위치)
             glm::vec3 currentPlanetPos = getPlanetPosition(std::distance(planets.begin(), std::find(planets.begin(), planets.end(), p)));
@@ -840,6 +841,7 @@ void updateGameLogic() {
                 else {
                     p.size = 0.0f; // 완전 파괴
                     p.health = 0;
+                    p.active = false;
                     spawnExplosion(currentPlanetPos, glm::vec3(1.0f, 0.1f, 0.0f), 100); // 대규모 폭발
                     printf("Planet %s was destroyed!\n", p.name.c_str());
                 }
@@ -1212,8 +1214,7 @@ void drawScene() {
 
         // 2. 자전 (Y축 회전)
         // 표의 데이터가 반영된 자전 속도 적용
-        pModel = glm::rotate(pModel, glm::radians(rotateTime * p.selfRotateSpeed * 5.0f), glm::vec3(0, 1, 0));
-        // *5.0f는 전체적인 회전 속도를 조절하는 계수입니다. (너무 느리면 숫자를 키우세요)
+        pModel = glm::rotate(pModel, glm::radians(rotateTime * p.selfRotateSpeed * planetSpinMultiplier), glm::vec3(0, 1, 0));
 
         // 3. 크기 적용
         pModel = glm::scale(pModel, glm::vec3(p.size));
@@ -1631,6 +1632,23 @@ std::vector<Protocol::ProjectileState> captureActiveProjectiles() {
     return projectiles;
 }
 
+std::vector<Protocol::PlanetState> capturePlanetStates() {
+    std::vector<Protocol::PlanetState> states;
+    states.reserve(planets.size());
+    constexpr float timeUnitsPerSecond = planetTimeStep / worldTickSeconds;
+    // 수성부터 해왕성까지 순서가 고정되어 있고 파괴된 행성도 목록에 남는다.
+    for (std::size_t i = 0; i < planets.size(); ++i) {
+        const auto& planet = planets[i];
+        states.push_back({
+            static_cast<std::uint32_t>(i + 1), planet.distance, planet.size, planet.initialSize,
+            planet.orbitSpeed * timeUnitsPerSecond,
+            planet.selfRotateSpeed * planetSpinMultiplier * timeUnitsPerSecond,
+            planet.axisTilt, planet.health, static_cast<std::uint8_t>(planet.active)
+        });
+    }
+    return states;
+}
+
 // 매 게임 틱마다 현재 키와 마우스 상태를 수집해 sendInput()에 넘긴다.
 void runClientTick() {
     // 참가 승인을 받지 않았다면 대기 중인 입력과 업데이트 번호를 초기화한다.
@@ -1672,8 +1690,8 @@ void runHostTick() {
         fireMissile();
         missileFireCounter = MISSILE_FIRE_DELAY;
     }
-    if (isRotating) rotateTime += 0.5f;
-    if (isOrbiting) orbitTime += 0.5f;
+    if (isRotating) rotateTime += planetTimeStep;
+    if (isOrbiting) orbitTime += planetTimeStep;
 
     const int forwardInput = keyState['w'] - keyState['s'];
     const int strafeInput = keyState['d'] - keyState['a'];
