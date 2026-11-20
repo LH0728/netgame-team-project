@@ -127,6 +127,7 @@ constexpr unsigned int worldTickMs = 16;
 constexpr float worldTickSeconds = worldTickMs / 1000.0f;
 constexpr float planetTimeStep = 0.5f; // 한 틱 동안 공전·자전 시계가 전진하는 양
 constexpr float planetSpinMultiplier = 5.0f;
+constexpr float sunExplosionTimeStep = 0.1f; // 한 틱에 진행하는 폭발 연출 시간
 std::uint64_t worldTick = 0; // 초기 월드는 0틱이며 월드를 갱신할 때마다 증가한다.
 float globalTime = 0.0f;
 // [추가] 자전/공전 제어 변수
@@ -887,7 +888,7 @@ void updateGameLogic() {
 
     // [추가] 태양 폭발 애니메이션 로직
     if (isSunExploding) {
-        sunExplosionTimer += 0.1f; // 폭발 진행
+        sunExplosionTimer += sunExplosionTimeStep; // 폭발 진행
 
         // 1. 지속적으로 태양 위치에서 파티클 생성 (점점 격렬하게)
         int particleCount = 5 + (int)(sunExplosionTimer * 2.0f);
@@ -1647,6 +1648,40 @@ std::vector<Protocol::PlanetState> capturePlanetStates() {
         });
     }
     return states;
+}
+
+struct WorldSnapshot {
+    Protocol::WorldSnapshotHeader header;
+    std::vector<Protocol::PlayerState> players;
+    std::vector<Protocol::ProjectileState> projectiles;
+    std::vector<Protocol::PlanetState> planets;
+};
+
+WorldSnapshot captureWorldSnapshot() {
+    WorldSnapshot snapshot{};
+    auto& header = snapshot.header;
+    auto& world = header.world;
+    header.serverTick = static_cast<std::uint32_t>(worldTick);
+    world.phase = Protocol::WorldPhase::Playing;
+    if (isGameCleared) world.phase = Protocol::WorldPhase::Cleared;
+    else if (isSunExploding) world.phase = Protocol::WorldPhase::SunExploding;
+    world.rotating = isRotating;
+    world.orbiting = isOrbiting;
+
+    // 각 시계가 실제로 진행한 시뮬레이션 시간을 초 단위로 기록한다.
+    world.globalTime = static_cast<float>(worldTick) * worldTickSeconds;
+    constexpr float secondsPerPlanetTimeUnit = worldTickSeconds / planetTimeStep;
+    world.rotateTime = rotateTime * secondsPerPlanetTimeUnit;
+    world.orbitTime = orbitTime * secondsPerPlanetTimeUnit;
+    world.sunExplosionTime = sunExplosionTimer * (worldTickSeconds / sunExplosionTimeStep);
+
+    snapshot.players.push_back(captureLocalPlayerState(Protocol::HOST_PLAYER_ID));
+    snapshot.projectiles = captureActiveProjectiles();
+    snapshot.planets = capturePlanetStates();
+    header.playerCount = static_cast<std::uint32_t>(snapshot.players.size());
+    header.projectileCount = static_cast<std::uint32_t>(snapshot.projectiles.size());
+    header.planetCount = static_cast<std::uint32_t>(snapshot.planets.size());
+    return snapshot;
 }
 
 // 매 게임 틱마다 현재 키와 마우스 상태를 수집해 sendInput()에 넘긴다.
