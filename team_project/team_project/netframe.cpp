@@ -154,3 +154,35 @@ bool decodeFrames(
 
     return true;
 }
+
+bool flushSendQueue(SOCKET socket, SendState& state)
+{
+    while (!state.sendQueue.empty()) {
+        const std::vector<char>& frame = state.sendQueue.front();
+
+        const char* start = frame.data() + state.sendOffset;
+        const int remaining = static_cast<int>(frame.size() - state.sendOffset);
+
+        const int sent = send(socket, start, remaining, 0);
+
+        if (sent == SOCKET_ERROR) {
+            if (WSAGetLastError() == WSAEWOULDBLOCK) {
+                return true;  // 현재 위치를 보존하고 다음 쓰기 기회에 재시도
+            }
+            return false;
+        }
+
+        if (sent == 0) {
+            return false;  // 남은 데이터가 있는데 송신이 진행되지 않음
+        }
+
+        state.sendOffset += sent;
+
+        if (state.sendOffset == frame.size()) {
+            state.sendQueue.pop_front();
+            state.sendOffset = 0;  // 다음 프레임의 시작 위치
+        }
+    }
+
+    return true;
+}
