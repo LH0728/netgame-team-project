@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -27,6 +27,31 @@ public:
 
     std::uint32_t playerId() const { return playerId_; }
     std::uint32_t sessionId() const { return sessionId_; }
+
+    // 게임 타이머에서 호출합니다. 논블로킹 소켓이므로 수신을 기다리며 멈추지 않습니다.
+    bool receiveFrames(std::vector<DecodedFrame>& frames) {
+        frames.clear();
+        if (socket_ == INVALID_SOCKET) return false;
+        char bytes[16384];
+        const int count = recv(socket_, bytes, sizeof(bytes), 0);
+        if (count == SOCKET_ERROR) {
+            if (WSAGetLastError() == WSAEWOULDBLOCK) return true;
+            closeConnection();
+            return false;
+        }
+        if (count == 0) {
+            closeConnection();
+            return false;
+        }
+        receiveBuffer_.insert(receiveBuffer_.end(), bytes, bytes + count);
+        if (!decodeFrames(receiveBuffer_, frames)) {
+            closeConnection();
+            return false;
+        }
+        return true;
+    }
+
+    void disconnect() { closeConnection(); }
 
     bool connectTo(const char* ip, unsigned short port) {
         closeConnection();
@@ -66,6 +91,7 @@ public:
         return joinSession();
     }
 private:
+    std::vector<char> receiveBuffer_;
     using Clock = std::chrono::steady_clock;
 
     static std::uint16_t readNetworkU16(const unsigned char* bytes) {
@@ -149,6 +175,7 @@ private:
     }
 
     void closeConnection() {
+        receiveBuffer_.clear();
         if (socket_ != INVALID_SOCKET) closesocket(socket_);
         socket_ = INVALID_SOCKET;
         if (started_) WSACleanup();

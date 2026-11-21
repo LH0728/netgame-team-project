@@ -1772,6 +1772,101 @@ bool encodeSnapshotBody(const WorldSnapshot& snapshot, std::vector<char>& body) 
     return true;
 }
 
+// 수신 모듈은 조각을 전부 조립하고 해석한 뒤 게임 스레드에서 호출합니다.
+// 원격 기체는 ID와 함께 보관하고, 내 기체는 기존 카메라와 이동 변수에 반영합니다.
+std::vector<Protocol::PlayerState> snapshotPlayers;
+
+bool applySnapshot(const WorldSnapshot& snapshot, std::uint32_t localPlayerId)
+{
+    // 송신 측과 같은 필드·ID·개수 검사를 통과한 상태만 적용합니다.
+    std::vector<char> checkedBody;
+    if (!encodeSnapshotBody(snapshot, checkedBody) ||
+        snapshot.planets.size() != planets.size() || localPlayerId == 0) {
+        return false;
+    }
+
+    const auto localPlayer = std::find_if(snapshot.players.begin(), snapshot.players.end(),
+        [localPlayerId](const Protocol::PlayerState& player) {
+            return player.playerId == localPlayerId;
+        });
+    if (localPlayer == snapshot.players.end()) return false;
+    for (const auto& planet : snapshot.planets) {
+        if (planet.planetId > planets.size()) return false;
+    }
+
+    // 새 세션의 첫 스냅샷은 이전 세션의 틱과 비교하지 않습니다.
+    static std::uint32_t lastSessionId = 0;
+    static std::uint32_t lastServerTick = 0;
+    static bool hasSnapshot = false;
+    const auto sessionId = connection.sessionId();
+    if (hasSnapshot && lastSessionId == sessionId) {
+        const std::uint32_t difference = snapshot.header.serverTick - lastServerTick;
+        if (difference == 0 || difference >= 0x80000000u) return false;
+    }
+
+    const auto& world = snapshot.header.world;
+    constexpr float timeUnitsPerSecond = planetTimeStep / worldTickSeconds;
+    const float nextGlobalTime = world.globalTime * timeUnitsPerSecond;
+    const float nextRotateTime = world.rotateTime * timeUnitsPerSecond;
+    const float nextOrbitTime = world.orbitTime * timeUnitsPerSecond;
+    const float nextExplosionTime = world.sunExplosionTime * (sunExplosionTimeStep / worldTickSeconds);
+    if (!std::isfinite(nextGlobalTime) || !std::isfinite(nextRotateTime) ||
+        !std::isfinite(nextOrbitTime) || !std::isfinite(nextExplosionTime)) return false;
+
+    // 임시 목록을 먼저 완성하므로 검증 실패 시 기존 월드는 바뀌지 않습니다.
+    auto nextPlayers = snapshot.players;
+    auto nextPlanets = planets;
+    std::vector<MissileData> nextMissiles;
+    nextMissiles.reserve(snapshot.projectiles.size());
+    for (const auto& projectile : snapshot.projectiles) {
+        const glm::vec3 velocity(projectile.velocity.x, projectile.velocity.y, projectile.velocity.z);
+        const double horizontal = std::hypot(double(velocity.x), double(velocity.z));
+        MissileData missile{};
+        missile.projectileId = projectile.projectileId;
+        missile.ownerPlayerId = projectile.ownerPlayerId;
+        missile.position = { projectile.position.x, projectile.position.y, projectile.position.z };
+        missile.velocity = velocity * worldTickSeconds;
+        missile.yaw = static_cast<float>(glm::degrees(std::atan2(double(velocity.x), double(velocity.z))));
+        missile.pitch = static_cast<float>(glm::degrees(std::atan2(double(velocity.y), horizontal)));
+        missile.lifeTime = projectile.lifeTime;
+        missile.active = true;
+        nextMissiles.push_back(missile);
+    }
+    for (const auto& state : snapshot.planets) {
+        auto& planet = nextPlanets[state.planetId - 1];
+        planet.distance = state.distance;
+        planet.size = state.size;
+        planet.initialSize = state.initialSize;
+        planet.orbitSpeed = state.orbitSpeed / timeUnitsPerSecond;
+        planet.selfRotateSpeed = state.selfRotateSpeed / (planetSpinMultiplier * timeUnitsPerSecond);
+        planet.axisTilt = state.axisTilt;
+        planet.health = state.health;
+        planet.active = state.active != 0;
+    }
+
+    shipPos = { localPlayer->position.x, localPlayer->position.y, localPlayer->position.z };
+    shipAngle = localPlayer->yaw;
+    shipPitch = localPlayer->pitch;
+    snapshotPlayers.swap(nextPlayers);
+    planets.swap(nextPlanets);
+    missiles.swap(nextMissiles); // 서버 목록에서 빠진 미사일도 함께 제거됩니다.
+    worldTick = snapshot.header.serverTick;
+    globalTime = nextGlobalTime;
+    rotateTime = nextRotateTime;
+    orbitTime = nextOrbitTime;
+    sunExplosionTimer = nextExplosionTime;
+    isRotating = world.rotating != 0;
+    isOrbiting = world.orbiting != 0;
+    isGameCleared = world.phase == Protocol::WorldPhase::Cleared;
+    isSunExploding = world.phase == Protocol::WorldPhase::SunExploding;
+    isSunDestroyed = isGameCleared;
+
+    lastSessionId = sessionId;
+    lastServerTick = snapshot.header.serverTick;
+    hasSnapshot = true;
+    return true;
+}
+
 struct PublishedWorldSnapshot {
     std::uint32_t id;
     std::vector<char> body;
@@ -1807,6 +1902,185 @@ bool SnapshotSender::takeFrame(std::uint32_t sequence, std::vector<char>& frame)
     snapshot_ = source;
     offset_ = offset + count;
     return true;
+}
+
+// 전부 조립한 논리 본문을 Protocol.h의 순서대로 읽습니다.
+bool decodeSnapshotBody(const std::vector<char>& body, WorldSnapshot& snapshot)
+{
+    if (body.size() < Protocol::WORLD_SNAPSHOT_HEADER_SIZE) return false;
+    std::size_t offset = 0;
+    auto readU32 = [&]() {
+        std::uint32_t value;
+        std::memcpy(&value, body.data() + offset, 4);
+        offset += 4;
+        return ntohl(value);
+    };
+    auto readFloat = [&]() {
+        const auto bits = readU32();
+        float value;
+        std::memcpy(&value, &bits, 4);
+        return value;
+    };
+    auto readByte = [&]() { return static_cast<std::uint8_t>(body[offset++]); };
+
+    WorldSnapshot next{};
+    auto& header = next.header;
+    auto& world = header.world;
+    header.serverTick = readU32();
+    world.phase = static_cast<Protocol::WorldPhase>(readByte());
+    world.rotating = readByte();
+    world.orbiting = readByte();
+    world.globalTime = readFloat();
+    world.rotateTime = readFloat();
+    world.orbitTime = readFloat();
+    world.sunExplosionTime = readFloat();
+    header.playerCount = readU32();
+    header.projectileCount = readU32();
+    header.planetCount = readU32();
+
+    // 개수에 맞는 바이트가 정확히 있는지 확인한 뒤에만 목록을 읽습니다.
+    const std::uint64_t expected = Protocol::WORLD_SNAPSHOT_HEADER_SIZE
+        + std::uint64_t(header.playerCount) * Protocol::PLAYER_STATE_SIZE
+        + std::uint64_t(header.projectileCount) * Protocol::PROJECTILE_STATE_SIZE
+        + std::uint64_t(header.planetCount) * Protocol::PLANET_STATE_SIZE;
+    if (expected != body.size() || header.projectileCount > Protocol::MAX_PROJECTILES ||
+        header.planetCount > Protocol::MAX_PLANETS) return false;
+
+    next.players.resize(header.playerCount);
+    for (auto& player : next.players) {
+        player.playerId = readU32();
+        player.position = { readFloat(), readFloat(), readFloat() };
+        player.yaw = readFloat();
+        player.pitch = readFloat();
+    }
+    next.projectiles.resize(header.projectileCount);
+    for (auto& projectile : next.projectiles) {
+        projectile.projectileId = readU32();
+        projectile.ownerPlayerId = readU32();
+        projectile.position = { readFloat(), readFloat(), readFloat() };
+        projectile.velocity = { readFloat(), readFloat(), readFloat() };
+        projectile.lifeTime = readFloat();
+    }
+    next.planets.resize(header.planetCount);
+    for (auto& planet : next.planets) {
+        planet.planetId = readU32();
+        planet.distance = readFloat();
+        planet.size = readFloat();
+        planet.initialSize = readFloat();
+        planet.orbitSpeed = readFloat();
+        planet.selfRotateSpeed = readFloat();
+        planet.axisTilt = readFloat();
+        const auto health = readU32();
+        if (health > INT32_MAX) return false;
+        planet.health = static_cast<std::int32_t>(health);
+        planet.active = readByte();
+    }
+    std::vector<char> checked;
+    if (!encodeSnapshotBody(next, checked)) return false;
+    snapshot = std::move(next);
+    return true;
+}
+
+// 한 세션에서 한 스냅샷씩 조립합니다. 새 접속은 새 상태로 시작합니다.
+struct SnapshotReceiveState {
+    std::uint32_t sessionId = 0;
+    std::uint32_t nextSequence = 2; // 참가 승인 프레임은 1입니다.
+    std::uint32_t snapshotId = 0;
+    std::uint32_t totalBytes = 0;
+    std::vector<char> body;
+    std::chrono::steady_clock::time_point startedAt{};
+};
+
+bool receiveSnapshotChunk(const std::vector<char>& chunk, SnapshotReceiveState& state)
+{
+    if (chunk.size() <= Protocol::WORLD_INIT_CHUNK_HEADER_SIZE ||
+        chunk.size() > Protocol::MAX_BODY_SIZE) return false;
+    auto readU32 = [&](std::size_t offset) {
+        std::uint32_t value;
+        std::memcpy(&value, chunk.data() + offset, 4);
+        return ntohl(value);
+    };
+    const auto id = readU32(0);
+    const auto total = readU32(4);
+    const auto offset = readU32(8);
+    const auto count = chunk.size() - Protocol::WORLD_INIT_CHUNK_HEADER_SIZE;
+    if (id == 0 || total < Protocol::WORLD_SNAPSHOT_HEADER_SIZE ||
+        offset > total || count > total - offset) return false;
+
+    if (state.body.empty()) {
+        if (offset != 0) return false;
+        if (state.snapshotId != 0) {
+            const std::uint32_t difference = id - state.snapshotId;
+            if (difference == 0 || difference >= 0x80000000u) return false;
+        }
+        state.snapshotId = id;
+        state.totalBytes = total;
+        state.startedAt = std::chrono::steady_clock::now();
+    }
+    if (id != state.snapshotId || total != state.totalBytes ||
+        offset != state.body.size()) return false;
+    // 광고한 전체 길이로 미리 할당하지 않고 실제 도착한 바이트만 저장합니다.
+    state.body.insert(state.body.end(),
+        chunk.begin() + Protocol::WORLD_INIT_CHUNK_HEADER_SIZE, chunk.end());
+    if (state.body.size() != state.totalBytes) return true;
+
+    WorldSnapshot snapshot;
+    if (!decodeSnapshotBody(state.body, snapshot)) return false;
+    if (!applySnapshot(snapshot, connection.playerId())) return false;
+    state.body.clear();
+    return true;
+}
+
+void receiveServerSnapshots()
+{
+    static SnapshotReceiveState state;
+    if (connection.sessionId() == 0) {
+        state = {};
+        return;
+    }
+    if (state.sessionId != connection.sessionId()) {
+        state = {};
+        state.sessionId = connection.sessionId();
+    }
+    auto fail = [&]() {
+        std::cerr << u8"[클라이언트] 스냅샷 수신 실패로 연결을 종료합니다." << std::endl;
+        connection.disconnect();
+        state = {};
+    };
+    try {
+        if (!state.body.empty() &&
+            std::chrono::steady_clock::now() - state.startedAt >=
+                std::chrono::milliseconds(Protocol::RECEIVE_TIMEOUT_MS)) {
+            fail();
+            return;
+        }
+        std::vector<DecodedFrame> frames;
+        if (!connection.receiveFrames(frames)) {
+            fail();
+            return;
+        }
+        for (const auto& frame : frames) {
+            if (frame.header.sequence != state.nextSequence) {
+                fail();
+                return;
+            }
+            state.nextSequence = state.nextSequence == UINT32_MAX ? 1 : state.nextSequence + 1;
+            if (frame.header.type == Protocol::MessageType::SESSION_CLOSE) {
+                connection.disconnect();
+                state = {};
+                return;
+            }
+            if (frame.header.type == Protocol::MessageType::WORLD_SNAPSHOT &&
+                !receiveSnapshotChunk(frame.body, state)) {
+                fail();
+                return;
+            }
+        }
+    } catch (const std::bad_alloc&) {
+        fail();
+    } catch (const std::length_error&) {
+        fail();
+    }
 }
 
 // 매 게임 틱마다 현재 키와 마우스 상태를 수집해 sendInput()에 넘긴다.
@@ -1869,6 +2143,7 @@ void runHostTick() {
 }
 
 void Timer(int value) {
+    receiveServerSnapshots();
     runClientTick();
     if (connection.sessionId() == 0) {
         runHostTick();
