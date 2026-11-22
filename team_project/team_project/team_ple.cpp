@@ -860,6 +860,7 @@ void updateGameLogic() {
                 break;
             }
         }
+        if (!m.active) continue; // 행성에 명중한 미사일은 이번 틱의 충돌 판정을 마친다.
         for (auto& a : asteroids) {
             if (a.health <= 0) continue;
             glm::vec3 currentAsteroidPos = a.position + (a.velocity * globalTime);
