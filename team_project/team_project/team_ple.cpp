@@ -44,11 +44,6 @@ struct PlanetData {
     std::string planetType;     // 행성 타입 (암석/가스형)
 };
 
-bool operator==(const PlanetData& a, const PlanetData& b) {
-    // 행성의 이름이 같으면 같은 행성으로 간주합니다.
-    return a.name == b.name;
-}
-
 struct AsteroidData {
     glm::vec3 position;
     glm::vec3 velocity;
@@ -811,74 +806,100 @@ void initRing() {
     glEnableVertexAttribArray(2);
 }
 
-void updateGameLogic() {
-    for (int i = 0; i < missiles.size(); ) {
-        if (!missiles[i].active) {
-            missiles.erase(missiles.begin() + i);
-            continue;
+static float missileHitFraction(const glm::vec3& start, const glm::vec3& travel,
+    const glm::vec3& center, float radius) {
+    constexpr float noHit = std::numeric_limits<float>::infinity();
+    const glm::vec3 offset = start - center;
+    const float distanceFromSurface = glm::dot(offset, offset) - radius * radius;
+    if (distanceFromSurface <= 0.0f) return 0.0f;
+
+    const float approach = glm::dot(offset, travel);
+    if (approach >= 0.0f) return noHit;
+    const float travelSquared = glm::dot(travel, travel);
+    const float discriminant = approach * approach - travelSquared * distanceFromSurface;
+    if (discriminant < 0.0f) return noHit;
+    // 선분 시작을 0, 끝을 1로 두고 구에 처음 들어가는 지점을 구한다.
+    const float entry = distanceFromSurface / (-approach + std::sqrt(discriminant));
+    return entry <= 1.0f ? entry : noHit;
+}
+
+static void resolveMissileHit(MissileData& missile, const glm::vec3& start) {
+    float firstHit = std::numeric_limits<float>::infinity();
+    PlanetData* hitPlanet = nullptr;
+    AsteroidData* hitAsteroid = nullptr;
+    glm::vec3 hitCenter{};
+    for (int i = 0; i < static_cast<int>(planets.size()); ++i) {
+        auto& planet = planets[i];
+        if (!planet.active || planet.distance == 0.0f) continue;
+        const glm::vec3 center = getPlanetPosition(i);
+        const float hit = missileHitFraction(start, missile.velocity, center, planet.size + 0.5f);
+        if (hit < firstHit) {
+            firstHit = hit;
+            hitPlanet = &planet;
+            hitCenter = center;
         }
-        missiles[i].position += missiles[i].velocity;
-        missiles[i].lifeTime += worldTickSeconds;
-        if (glm::length(missiles[i].position) > missileRange) missiles.erase(missiles.begin() + i);
-        else i++;
     }
 
-    for (auto& m : missiles) {
-        if (!m.active) continue;
-        // ----------------------------------------------------
-        // [추가] 행성과의 충돌 처리
-        // ----------------------------------------------------
-        for (auto& p : planets) {
-            if (!p.active || p.distance == 0.0f) continue;
-
-            // 행성의 현재 위치 계산 (공전 위치)
-            glm::vec3 currentPlanetPos = getPlanetPosition(std::distance(planets.begin(), std::find(planets.begin(), planets.end(), p)));
-
-            // 미사일과 행성 중심 간의 거리
-            float dist = glm::length(m.position - currentPlanetPos);
-
-            // 충돌 반경 설정 (행성 크기 + 미사일 여유분 0.5f)
-            if (dist < p.size + 0.5f) {
-                m.active = false; // 미사일 비활성화
-                p.health -= 10;       // 행성 체력 감소
-                spawnExplosion(m.position, glm::vec3(0.1f, 0.5f, 0.2f), 5); // 충돌 폭발 효과 (색상 변경)
-
-                // 행성 크기 감소 및 완전 파괴
-                float initialHealth = p.initialSize * 10.0f;
-                float hpRatio = (float)p.health / initialHealth;
-                if (p.health > 0) {
-                    // 체력에 비례하여 크기 줄이기 (최소 50%까지)
-                    p.size = p.initialSize * (0.5f + 0.5f * hpRatio);
-                }
-                else {
-                    p.size = 0.0f; // 완전 파괴
-                    p.health = 0;
-                    p.active = false;
-                    spawnExplosion(currentPlanetPos, glm::vec3(1.0f, 0.1f, 0.0f), 100); // 대규모 폭발
-                    printf("Planet %s was destroyed!\n", p.name.c_str());
-                }
-                break;
-            }
+    for (auto& asteroid : asteroids) {
+        if (asteroid.health <= 0) continue;
+        const glm::vec3 center = asteroid.position + asteroid.velocity * globalTime;
+        const float hit = missileHitFraction(start, missile.velocity, center, asteroid.size + 0.3f);
+        if (hit < firstHit) {
+            firstHit = hit;
+            hitPlanet = nullptr;
+            hitAsteroid = &asteroid;
+            hitCenter = center;
         }
-        if (!m.active) continue; // 행성에 명중한 미사일은 이번 틱의 충돌 판정을 마친다.
-        for (auto& a : asteroids) {
-            if (a.health <= 0) continue;
-            glm::vec3 currentAsteroidPos = a.position + (a.velocity * globalTime);
-            float dist = glm::length(m.position - currentAsteroidPos);
-            if (dist < a.size + 0.3f) {
-                m.active = false;
-                a.health--;
-                spawnExplosion(currentAsteroidPos, glm::vec3(0.5f, 0.4f, 0.3f), 3);
+    }
 
-                float hpRatio = (float)a.health / (float)(a.initialSize * 3.0f);
-                if (a.health > 0) a.size = a.initialSize * (0.4f + 0.6f * hpRatio);
-                if (a.health <= 0) {
-                    a.size = 0.0f;
-                    spawnExplosion(currentAsteroidPos, glm::vec3(0.8f, 0.3f, 0.1f), 30);
-                }
-                break;
-            }
+    if (!hitPlanet && !hitAsteroid) return;
+    missile.active = false;
+    if (hitPlanet) {
+        auto& planet = *hitPlanet;
+        planet.health -= 10;
+        const glm::vec3 impact = start + missile.velocity * firstHit;
+        spawnExplosion(impact, glm::vec3(0.1f, 0.5f, 0.2f), 5);
+        if (planet.health > 0) {
+            const float hpRatio = static_cast<float>(planet.health) / (planet.initialSize * 10.0f);
+            planet.size = planet.initialSize * (0.5f + 0.5f * hpRatio);
+        } else {
+            planet.health = 0;
+            planet.size = 0.0f;
+            planet.active = false;
+            spawnExplosion(hitCenter, glm::vec3(1.0f, 0.1f, 0.0f), 100);
+            printf("Planet %s was destroyed!\n", planet.name.c_str());
         }
+    } else {
+        auto& asteroid = *hitAsteroid;
+        --asteroid.health;
+        spawnExplosion(hitCenter, glm::vec3(0.5f, 0.4f, 0.3f), 3);
+        if (asteroid.health > 0) {
+            const float hpRatio = static_cast<float>(asteroid.health) / (asteroid.initialSize * 3.0f);
+            asteroid.size = asteroid.initialSize * (0.4f + 0.6f * hpRatio);
+        } else {
+            asteroid.size = 0.0f;
+            spawnExplosion(hitCenter, glm::vec3(0.8f, 0.3f, 0.1f), 30);
+        }
+    }
+}
+
+void updateGameLogic() {
+    for (auto missile = missiles.begin(); missile != missiles.end();) {
+        if (!missile->active) {
+            missile = missiles.erase(missile);
+            continue;
+        }
+
+        const glm::vec3 start = missile->position;
+        missile->position += missile->velocity;
+        missile->lifeTime += worldTickSeconds;
+        if (glm::length(missile->position) > missileRange) {
+            missile = missiles.erase(missile);
+            continue;
+        }
+
+        resolveMissileHit(*missile, start);
+        ++missile;
     }
     asteroids.erase(std::remove_if(asteroids.begin(), asteroids.end(),
         [](const AsteroidData& a) { return a.size <= 0.0f; }), asteroids.end());
