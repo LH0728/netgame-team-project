@@ -65,6 +65,12 @@ struct MissileData {
     bool active;
 };
 
+struct MissileLauncher {
+    std::uint32_t ownerPlayerId;
+    std::uint64_t lastFireTick = 0;
+    bool hasFired = false;
+};
+
 struct Particle {
     glm::vec3 position;
     glm::vec3 velocity;
@@ -141,8 +147,8 @@ bool isTyping = false;       // 현재 검색창이 켜져있는가?
 std::string inputString = ""; // 현재 입력된 검색어
 bool isGameCleared = false;
 
-const int MISSILE_FIRE_DELAY = 10;
-int missileFireCounter = 0;
+constexpr std::uint64_t missileFireDelayTicks = 10;
+MissileLauncher hostMissileLauncher{Protocol::HOST_PLAYER_ID};
 
 
 // --- 전역 변수 ---
@@ -173,7 +179,7 @@ void updateParticles();
 void updateGameLogic();
 void updateMovement(glm::vec3& position, float yaw, float pitch,
     int forwardInput, int strafeInput, bool boosting);
-void spawnMissile(std::uint32_t ownerPlayerId, const glm::vec3& origin, const glm::vec3& direction);
+void spawnMissile(MissileLauncher& launcher, const glm::vec3& origin, const glm::vec3& direction);
 void fireMissile();
 
 void drawScene();
@@ -687,7 +693,14 @@ void drawCrosshair() {
     glPopMatrix();
 }
 
+static bool canFireMissile(const MissileLauncher& launcher) {
+    return launcher.ownerPlayerId != 0 && nextProjectileId != 0 &&
+        (!launcher.hasFired || worldTick - launcher.lastFireTick >= missileFireDelayTicks);
+}
+
 void fireMissile() {
+    if (!canFireMissile(hostMissileLauncher)) return;
+
     GLint viewport[4]; glGetIntegerv(GL_VIEWPORT, viewport);
     glm::vec3 cameraPos, cameraTarget, cameraUp(0, 1, 0);
     glm::vec3 shipDir;
@@ -740,11 +753,11 @@ void fireMissile() {
 
     if (!hit) targetPos = rayOrigin + rayDir * 5000.0f;
 
-    spawnMissile(Protocol::HOST_PLAYER_ID, shipPos, targetPos - shipPos);
+    spawnMissile(hostMissileLauncher, shipPos, targetPos - shipPos);
 }
 
-void spawnMissile(std::uint32_t ownerPlayerId, const glm::vec3& origin, const glm::vec3& direction) {
-    if (nextProjectileId == 0 || ownerPlayerId == 0) return;
+void spawnMissile(MissileLauncher& launcher, const glm::vec3& origin, const glm::vec3& direction) {
+    if (!canFireMissile(launcher)) return;
     if (!std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z)) return;
     const float length = glm::length(direction);
     if (!std::isfinite(length) || length <= 0.0f) return;
@@ -752,7 +765,7 @@ void spawnMissile(std::uint32_t ownerPlayerId, const glm::vec3& origin, const gl
     const glm::vec3 fireDir = direction / length;
     MissileData m{};
     m.projectileId = nextProjectileId;
-    m.ownerPlayerId = ownerPlayerId;
+    m.ownerPlayerId = launcher.ownerPlayerId;
     m.position = origin + fireDir * 2.0f;
     m.velocity = fireDir * missileSpeed;
 
@@ -764,6 +777,8 @@ void spawnMissile(std::uint32_t ownerPlayerId, const glm::vec3& origin, const gl
     m.lifeTime = 0.0f;
     m.active = true;
     missiles.push_back(m);
+    launcher.lastFireTick = worldTick;
+    launcher.hasFired = true;
     ++nextProjectileId;
 }
 
@@ -2146,13 +2161,7 @@ void runClientTick() {
 void runHostTick() {
     ++worldTick;
     globalTime = static_cast<float>(worldTick) * 0.5f;
-    if (missileFireCounter > 0) {
-        missileFireCounter--;
-    }
-    if (isLeftButtonDown && missileFireCounter <= 0) {
-        fireMissile();
-        missileFireCounter = MISSILE_FIRE_DELAY;
-    }
+    if (isLeftButtonDown) fireMissile();
     if (isRotating) rotateTime += planetTimeStep;
     if (isOrbiting) orbitTime += planetTimeStep;
 
