@@ -178,6 +178,7 @@ void updateParticles();
 void updateGameLogic();
 void updateMovement(glm::vec3& position, float yaw, float pitch,
     int forwardInput, int strafeInput, bool boosting);
+void spawnMissile(std::uint32_t ownerPlayerId, const glm::vec3& origin, const glm::vec3& direction);
 void fireMissile();
 
 void drawScene();
@@ -692,8 +693,6 @@ void drawCrosshair() {
 }
 
 void fireMissile() {
-    if (nextProjectileId == 0) return;
-
     GLint viewport[4]; glGetIntegerv(GL_VIEWPORT, viewport);
     glm::vec3 cameraPos, cameraTarget, cameraUp(0, 1, 0);
     glm::vec3 shipDir;
@@ -746,18 +745,26 @@ void fireMissile() {
 
     if (!hit) targetPos = rayOrigin + rayDir * 5000.0f;
 
-    // ★★★ [수정 2] 3D 회전 각도(Yaw, Pitch) 계산 ★★★
-    MissileData m;
+    spawnMissile(Protocol::HOST_PLAYER_ID, shipPos, targetPos - shipPos);
+}
+
+void spawnMissile(std::uint32_t ownerPlayerId, const glm::vec3& origin, const glm::vec3& direction) {
+    if (nextProjectileId == 0 || ownerPlayerId == 0) return;
+    if (!std::isfinite(origin.x) || !std::isfinite(origin.y) || !std::isfinite(origin.z)) return;
+    const float length = glm::length(direction);
+    if (!std::isfinite(length) || length <= 0.0f) return;
+
+    const glm::vec3 fireDir = direction / length;
+    MissileData m{};
     m.projectileId = nextProjectileId;
-    m.ownerPlayerId = Protocol::HOST_PLAYER_ID;
-    glm::vec3 fireDir = glm::normalize(targetPos - shipPos);
-    m.position = shipPos + fireDir * 2.0f;
+    m.ownerPlayerId = ownerPlayerId;
+    m.position = origin + fireDir * 2.0f;
     m.velocity = fireDir * missileSpeed;
 
     // 좌우 회전 (Y축 기준)
     m.yaw = glm::degrees(atan2(fireDir.x, fireDir.z));
     // 상하 회전 (X축 기준)
-    m.pitch = glm::degrees(asin(fireDir.y));
+    m.pitch = glm::degrees(asin(glm::clamp(fireDir.y, -1.0f, 1.0f)));
 
     m.lifeTime = 0.0f;
     m.active = true;
