@@ -1,7 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
-
+#include <utility>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +23,8 @@ struct ClientSession {
     std::uint32_t playerId;
     std::uint32_t sessionId;
     std::vector<char> receiveBuffer;
+	SendState sendState; // 송신 큐 상태 ( 아직 보낼 데이터가 얼마나 남았는지 확인 )
+    std::uint32_t nextSendSequence = 1;
     bool joinValidated = false;
     std::vector<char> approvalFrame;
     std::size_t approvalBytesSent = 0;
@@ -57,26 +59,26 @@ void writeNetworkU32(unsigned char* bytes, std::uint32_t value) {
     writeNetworkU16(bytes + 2, static_cast<std::uint16_t>(value));
 }
 
-bool sendJoinApproval(ClientSession& client) {
-    if (client.approvalFrame.empty()) return false;
-    if (client.approvalBytesSent == client.approvalFrame.size()) return true;
-    const int sent = send(client.socket,
-        client.approvalFrame.data() + client.approvalBytesSent,
-        static_cast<int>(client.approvalFrame.size() - client.approvalBytesSent), 0);
-    if (sent == SOCKET_ERROR) {
-        const int error = WSAGetLastError();
-        if (error == WSAEWOULDBLOCK) return true;
-        std::cerr << "[Server] Join approval send failed: " << error << std::endl;
-        return false;
-    }
-    if (sent == 0) return false;
-    client.approvalBytesSent += static_cast<std::size_t>(sent);
-    if (client.approvalBytesSent == client.approvalFrame.size()) {
-        std::cout << "[Server] Client approved. Player ID: " << client.playerId
-            << " | Session ID: " << client.sessionId << std::endl;
-    }
-    return true;
-}
+//bool sendJoinApproval(ClientSession& client) {
+//    if (client.approvalFrame.empty()) return false;
+//    if (client.approvalBytesSent == client.approvalFrame.size()) return true;
+//    const int sent = send(client.socket,
+//        client.approvalFrame.data() + client.approvalBytesSent,
+//        static_cast<int>(client.approvalFrame.size() - client.approvalBytesSent), 0);
+//    if (sent == SOCKET_ERROR) {
+//        const int error = WSAGetLastError();
+//        if (error == WSAEWOULDBLOCK) return true;
+//        std::cerr << "[Server] Join approval send failed: " << error << std::endl;
+//        return false;
+//    }
+//    if (sent == 0) return false;
+//    client.approvalBytesSent += static_cast<std::size_t>(sent);
+//    if (client.approvalBytesSent == client.approvalFrame.size()) {
+//        std::cout << "[Server] Client approved. Player ID: " << client.playerId
+//            << " | Session ID: " << client.sessionId << std::endl;
+//    }
+//    return true;
+//}
 
 bool consumeJoinRequest(ClientSession& client, const char* bytes, std::size_t count) {
     // This handler owns admission only. Gameplay dispatch is the next host step.
@@ -113,9 +115,24 @@ bool consumeJoinRequest(ClientSession& client, const char* bytes, std::size_t co
     std::vector<char> body(Protocol::SESSION_JOIN_ACCEPT_BODY_SIZE);
     writeNetworkU32(reinterpret_cast<unsigned char*>(body.data()), client.playerId);
     writeNetworkU32(reinterpret_cast<unsigned char*>(body.data() + 4), client.sessionId);
-    if (!encodeFrame(Protocol::MessageType::SESSION_JOIN_ACCEPT, 1, body, client.approvalFrame))
+    
+    std::vector<char> frame;
+
+    if (!encodeFrame(Protocol::MessageType::SESSION_JOIN_ACCEPT, 1, body, frame))
         return false;
+
+    client.sendState.sendQueue.push_back(std::move(frame));
+
+    ++client.nextSendSequence;
+    if (client.nextSendSequence == 0) {
+        client.nextSendSequence = 1;  // 프로토콜에서 0은 사용하지 않음
+    }
+	std::cout << "[Server] Join request validated. Player ID: " << client.playerId
+		<< "next sequence" << client.nextSendSequence << std::endl;
+
+
     client.joinValidated = true;
+
     std::cout << "[Server] Join request validated. Player ID: " << client.playerId
         << " | Session ID: " << client.sessionId << std::endl;
     return true;
@@ -213,8 +230,9 @@ int main() {
         FD_SET(server.listenSocket, &readable);
         for (const ClientSession& client : server.clients) {
             FD_SET(client.socket, &readable);
-            if (client.joinValidated && client.approvalBytesSent < client.approvalFrame.size())
+            if (!client.sendState.sendQueue.empty()) {
                 FD_SET(client.socket, &writable);
+            }
         }
         timeval timeout{0, 100000};
         if (select(0, &readable, &writable, nullptr, &timeout) == SOCKET_ERROR) {
@@ -241,7 +259,7 @@ int main() {
                     keepConnection = false;
             }
             if (keepConnection && FD_ISSET(client.socket, &writable))
-                keepConnection = sendJoinApproval(client);
+                keepConnection = flushSendQueue(client.socket, client.sendState);
             if (!keepConnection) {
                 const std::uint32_t playerId = client.playerId;
                 const std::uint32_t sessionId = client.sessionId;

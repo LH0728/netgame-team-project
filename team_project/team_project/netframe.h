@@ -28,3 +28,4 @@ struct SendState {
 };
 
 bool flushSendQueue(SOCKET socket, SendState& state);
+
