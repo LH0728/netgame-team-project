@@ -1,5 +1,6 @@
 ﻿#define _CRT_SECURE_NO_WARNINGS
 #include "connection_check.h"
+#include "host_server.h"
 #include "netframe.h"
 #include "snapshot_sender.h"
 #define STB_IMAGE_IMPLEMENTATION
@@ -837,6 +838,8 @@ static float missileHitFraction(const glm::vec3& start, const glm::vec3& travel,
     const float entry = distanceFromSurface / (-approach + std::sqrt(discriminant));
     return entry <= 1.0f ? entry : noHit;
 }
+
+static bool hostingNetworkGame = false;
 
 static void resolveMissileHit(MissileData& missile, const glm::vec3& start) {
     float firstHit = std::numeric_limits<float>::infinity();
@@ -2294,6 +2297,10 @@ void Timer(int value) {
     runClientTick();
     if (connection.sessionId() == 0) {
         runHostTick();
+        if (hostingNetworkGame && !pollHostServer()) {
+            glutLeaveMainLoop();
+            return;
+        }
     }
     updateParticles();
     glutPostRedisplay();
@@ -2302,7 +2309,15 @@ void Timer(int value) {
 
 int main(int argc, char** argv)
 {
-    connection.connectTo("127.0.0.1", Protocol::PORT);
+    const bool hostMode = argc == 2 && std::strcmp(argv[1], "--host") == 0;
+    const bool joinMode = argc == 3 && std::strcmp(argv[1], "--join") == 0;
+    if (hostMode || joinMode) {
+        if (joinMode && !connection.connectTo(argv[2], Protocol::PORT)) return 1;
+        argc = 1;
+        argv[1] = nullptr;
+    } else {
+        connection.connectTo("127.0.0.1", Protocol::PORT);
+    }
 
     glutInit(&argc, argv);
     int screenWidth = glutGet(GLUT_SCREEN_WIDTH);
@@ -2336,6 +2351,10 @@ int main(int argc, char** argv)
     initAsteroids();
     initRing();
     whiteTex = createWhiteTexture();
+    if (hostMode) {
+        if (!startHostServer()) return 1;
+        hostingNetworkGame = true;
+    }
 
     glutDisplayFunc(drawScene);
     glutReshapeFunc(Reshape);

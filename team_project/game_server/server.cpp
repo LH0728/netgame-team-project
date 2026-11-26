@@ -9,11 +9,12 @@
 #include <iostream>
 #include <vector>
 #include <conio.h>
-#include "netframe.h"
+#include "../team_project/netframe.h"
+#include "../team_project/host_server.h"
 
 namespace {
 constexpr unsigned short kServerPort = Protocol::PORT;
-constexpr std::size_t kMaxClients = 1; 
+constexpr std::size_t kMaxClients = 1;
 
 constexpr std::uint32_t kHostPlayerId = Protocol::HOST_PLAYER_ID;
 constexpr std::chrono::seconds kJoinRequestTimeout{5};
@@ -23,11 +24,9 @@ struct ClientSession {
     std::uint32_t playerId;
     std::uint32_t sessionId;
     std::vector<char> receiveBuffer;
-	SendState sendState; // 송신 큐 상태 ( 아직 보낼 데이터가 얼마나 남았는지 확인 )
+    SendState sendState;
     std::uint32_t nextSendSequence = 1;
     bool joinValidated = false;
-    std::vector<char> approvalFrame;
-    std::size_t approvalBytesSent = 0;
     std::chrono::steady_clock::time_point connectedAt = std::chrono::steady_clock::now();
 };
 
@@ -59,26 +58,13 @@ void writeNetworkU32(unsigned char* bytes, std::uint32_t value) {
     writeNetworkU16(bytes + 2, static_cast<std::uint16_t>(value));
 }
 
-//bool sendJoinApproval(ClientSession& client) {
-//    if (client.approvalFrame.empty()) return false;
-//    if (client.approvalBytesSent == client.approvalFrame.size()) return true;
-//    const int sent = send(client.socket,
-//        client.approvalFrame.data() + client.approvalBytesSent,
-//        static_cast<int>(client.approvalFrame.size() - client.approvalBytesSent), 0);
-//    if (sent == SOCKET_ERROR) {
-//        const int error = WSAGetLastError();
-//        if (error == WSAEWOULDBLOCK) return true;
-//        std::cerr << "[Server] Join approval send failed: " << error << std::endl;
-//        return false;
-//    }
-//    if (sent == 0) return false;
-//    client.approvalBytesSent += static_cast<std::size_t>(sent);
-//    if (client.approvalBytesSent == client.approvalFrame.size()) {
-//        std::cout << "[Server] Client approved. Player ID: " << client.playerId
-//            << " | Session ID: " << client.sessionId << std::endl;
-//    }
-//    return true;
-//}
+bool enqueueFrame(ClientSession& client, Protocol::MessageType type, const std::vector<char>& body) {
+    std::vector<char> frame;
+    if (!encodeFrame(type, client.nextSendSequence, body, frame)) return false;
+    client.sendState.sendQueue.push_back(std::move(frame));
+    if (++client.nextSendSequence == 0) client.nextSendSequence = 1;
+    return true;
+}
 
 bool consumeJoinRequest(ClientSession& client, const char* bytes, std::size_t count) {
     // This handler owns admission only. Gameplay dispatch is the next host step.
@@ -115,22 +101,7 @@ bool consumeJoinRequest(ClientSession& client, const char* bytes, std::size_t co
     std::vector<char> body(Protocol::SESSION_JOIN_ACCEPT_BODY_SIZE);
     writeNetworkU32(reinterpret_cast<unsigned char*>(body.data()), client.playerId);
     writeNetworkU32(reinterpret_cast<unsigned char*>(body.data() + 4), client.sessionId);
-    
-    std::vector<char> frame;
-
-    if (!encodeFrame(Protocol::MessageType::SESSION_JOIN_ACCEPT, 1, body, frame))
-        return false;
-
-    client.sendState.sendQueue.push_back(std::move(frame));
-
-    ++client.nextSendSequence;
-    if (client.nextSendSequence == 0) {
-        client.nextSendSequence = 1;  // 프로토콜에서 0은 사용하지 않음
-    }
-	std::cout << "[Server] Join request validated. Player ID: " << client.playerId
-		<< "next sequence" << client.nextSendSequence << std::endl;
-
-
+    if (!enqueueFrame(client, Protocol::MessageType::SESSION_JOIN_ACCEPT, body)) return false;
     client.joinValidated = true;
 
     std::cout << "[Server] Join request validated. Player ID: " << client.playerId
@@ -172,26 +143,24 @@ void acceptClient(ServerResources& server) {
         << " | Session ID: " << newClient.sessionId
         << " | Connected: " << server.clients.size() << std::endl;
 }
-}
 
-int main() {
-    ServerResources server;
+bool startServer(ServerResources& server) {
     WSADATA wsaData{};
     const int startupResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (startupResult != 0) {
         std::cerr << "WSAStartup failed: " << startupResult << '\n';
-        return 1;
+        return false;
     }
     server.winsockStarted = true;
     if (wsaData.wVersion != MAKEWORD(2, 2)) {
         std::cerr << "Winsock 2.2 is required.\n";
-        return 1;
+        return false;
     }
 
     server.listenSocket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (server.listenSocket == INVALID_SOCKET) {
         std::cerr << "socket failed: " << WSAGetLastError() << '\n';
-        return 1;
+        return false;
     }
 
     // Prevent another process from sharing this server's address and port.
@@ -199,7 +168,7 @@ int main() {
     if (setsockopt(server.listenSocket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
         reinterpret_cast<const char*>(&exclusiveAddress), sizeof(exclusiveAddress)) == SOCKET_ERROR) {
         std::cerr << "setsockopt failed: " << WSAGetLastError() << '\n';
-        return 1;
+        return false;
     }
 
     sockaddr_in serverAddress{};
@@ -210,71 +179,104 @@ int main() {
     if (bind(server.listenSocket, reinterpret_cast<const sockaddr*>(&serverAddress),
         sizeof(serverAddress)) == SOCKET_ERROR) {
         std::cerr << "bind failed: " << WSAGetLastError() << '\n';
-        return 1;
+        return false;
+    }
+
+    u_long nonblocking = 1;
+    if (ioctlsocket(server.listenSocket, FIONBIO, &nonblocking) == SOCKET_ERROR) {
+        std::cerr << "Listening socket setup failed: " << WSAGetLastError() << std::endl;
+        return false;
     }
 
     // Queue incoming requests, then accept them in the loop below.
     if (listen(server.listenSocket, SOMAXCONN) == SOCKET_ERROR) {
         std::cerr << "listen failed: " << WSAGetLastError() << '\n';
-        return 1;
+        return false;
     }
 
     std::cout << "TCP server listening on 0.0.0.0:" << kServerPort << '\n'
-        << "Host player ID: " << kHostPlayerId << '\n'
-        << "Press Enter to stop the server." << std::endl;
-    while (true) {
-        if (_kbhit() && _getch() == '\r') break;
-        fd_set readable, writable;
-        FD_ZERO(&readable);
-        FD_ZERO(&writable);
-        FD_SET(server.listenSocket, &readable);
-        for (const ClientSession& client : server.clients) {
-            FD_SET(client.socket, &readable);
-            if (!client.sendState.sendQueue.empty()) {
-                FD_SET(client.socket, &writable);
-            }
+        << "Host player ID: " << kHostPlayerId << std::endl;
+    return true;
+}
+
+bool pollServer(ServerResources& server, long waitMicros) {
+    fd_set readable, writable;
+    FD_ZERO(&readable);
+    FD_ZERO(&writable);
+    FD_SET(server.listenSocket, &readable);
+    for (const ClientSession& client : server.clients) {
+        FD_SET(client.socket, &readable);
+        if (!client.sendState.sendQueue.empty()) {
+            FD_SET(client.socket, &writable);
         }
-        timeval timeout{0, 100000};
-        if (select(0, &readable, &writable, nullptr, &timeout) == SOCKET_ERROR) {
-            std::cerr << "select failed: " << WSAGetLastError() << std::endl;
-            return 1;
+    }
+    timeval timeout{0, waitMicros};
+    if (select(0, &readable, &writable, nullptr, &timeout) == SOCKET_ERROR) {
+        std::cerr << "select failed: " << WSAGetLastError() << std::endl;
+        return false;
+    }
+    for (size_t i = 0; i < server.clients.size();) {
+        ClientSession& client = server.clients[i];
+        bool keepConnection = true;
+        if (!client.joinValidated &&
+            std::chrono::steady_clock::now() - client.connectedAt >= kJoinRequestTimeout) {
+            std::cerr << "[Server] Join request timed out. Player ID: " << client.playerId
+                << " | Session ID: " << client.sessionId << std::endl;
+            keepConnection = false;
         }
-        for (size_t i = 0; i < server.clients.size();) {
-            ClientSession& client = server.clients[i];
-            bool keepConnection = true;
-            if (!client.joinValidated &&
-                std::chrono::steady_clock::now() - client.connectedAt >= kJoinRequestTimeout) {
-                std::cerr << "[Server] Join request timed out. Player ID: " << client.playerId
-                    << " | Session ID: " << client.sessionId << std::endl;
+        if (keepConnection && FD_ISSET(client.socket, &readable)) {
+            char buffer[256];
+            const int received = recv(client.socket, buffer, sizeof(buffer), 0);
+            if (received > 0)
+                keepConnection = consumeJoinRequest(client, buffer, static_cast<std::size_t>(received));
+            else if (received == 0)
                 keepConnection = false;
-            }
-            if (keepConnection && FD_ISSET(client.socket, &readable)) {
-                char buffer[256];
-                const int received = recv(client.socket, buffer, sizeof(buffer), 0);
-                if (received > 0)
-                    keepConnection = consumeJoinRequest(client, buffer, static_cast<std::size_t>(received));
-                else if (received == 0)
-                    keepConnection = false;
-                else if (WSAGetLastError() != WSAEWOULDBLOCK)
-                    keepConnection = false;
-            }
-            if (keepConnection && FD_ISSET(client.socket, &writable))
-                keepConnection = flushSendQueue(client.socket, client.sendState);
-            if (!keepConnection) {
-                const std::uint32_t playerId = client.playerId;
-                const std::uint32_t sessionId = client.sessionId;
-                closesocket(client.socket);
-                server.clients.erase(server.clients.begin() + i);
-                std::cout << "[Server] Client disconnected. Player ID: " << playerId
-                    << " | Session ID: " << sessionId << " | Connected: "
-                    << server.clients.size() << std::endl;
-                continue;
-            }
-            ++i;
+            else if (WSAGetLastError() != WSAEWOULDBLOCK)
+                keepConnection = false;
         }
-        if (FD_ISSET(server.listenSocket, &readable)) {
-            acceptClient(server);
+        if (keepConnection && FD_ISSET(client.socket, &writable))
+            keepConnection = flushSendQueue(client.socket, client.sendState);
+        if (!keepConnection) {
+            const std::uint32_t playerId = client.playerId;
+            const std::uint32_t sessionId = client.sessionId;
+            closesocket(client.socket);
+            server.clients.erase(server.clients.begin() + i);
+            std::cout << "[Server] Client disconnected. Player ID: " << playerId
+                << " | Session ID: " << sessionId << " | Connected: "
+                << server.clients.size() << std::endl;
+            continue;
         }
+        ++i;
+    }
+    if (FD_ISSET(server.listenSocket, &readable)) {
+        acceptClient(server);
+    }
+    return true;
+}
+
+#ifdef NETGAME_EMBEDDED_SERVER
+ServerResources hostServer;
+
+#endif
+}
+
+#ifdef NETGAME_EMBEDDED_SERVER
+bool startHostServer() {
+    return startServer(hostServer);
+}
+
+bool pollHostServer() {
+    return pollServer(hostServer, 0);
+}
+
+#else
+int main() {
+    ServerResources server;
+    if (!startServer(server)) return 1;
+    std::cout << "Press Enter to stop the server." << std::endl;
+    while (!_kbhit() || _getch() != '\r') {
+        if (!pollServer(server, 100000)) return 1;
     }
     return 0;
 }
+#endif
