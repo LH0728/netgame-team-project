@@ -2025,7 +2025,108 @@ bool decodeSnapshotBody(const std::vector<char>& body, WorldSnapshot& snapshot)
     return true;
 }
 
-// 한 세션에서 한 스냅샷씩 조립합니다. 새 접속은 새 상태로 시작합니다.
+// Protocol.h의 공용 타입을 검증하며, 이미 사라진 대상도 위치만으로 효과를 재생합니다.
+bool isValidCombatEvent(const Protocol::CombatEvent& event)
+{
+    if (event.eventId == 0 || event.damage < 0 ||
+        !std::isfinite(event.position.x) || !std::isfinite(event.position.y) ||
+        !std::isfinite(event.position.z)) return false;
+
+    switch (event.eventType) {
+    case Protocol::CombatEventType::Hit:
+    case Protocol::CombatEventType::Destroyed:
+    case Protocol::CombatEventType::SunExplosion:
+        break;
+    default:
+        return false;
+    }
+    switch (event.targetKind) {
+    case Protocol::TargetKind::None:
+    case Protocol::TargetKind::Sun:
+        return event.targetId == 0;
+    case Protocol::TargetKind::Planet:
+        return event.targetId != 0 && event.targetId <= Protocol::MAX_PLANETS;
+    case Protocol::TargetKind::Player:
+    case Protocol::TargetKind::Asteroid:
+        return event.targetId != 0;
+    default:
+        return false;
+    }
+}
+
+// 구조체의 패딩을 복사하지 않고, 공용 본문 순서와 네트워크 바이트 순서로 읽습니다.
+bool decodeCombatEventBody(const std::vector<char>& body, Protocol::CombatEvent& event)
+{
+    if (body.size() != Protocol::COMBAT_EVENT_BODY_SIZE) return false;
+    std::size_t offset = 0;
+    auto readU32 = [&]() {
+        std::uint32_t value;
+        std::memcpy(&value, body.data() + offset, sizeof(value));
+        offset += sizeof(value);
+        return ntohl(value);
+    };
+    auto readU16 = [&]() {
+        std::uint16_t value;
+        std::memcpy(&value, body.data() + offset, sizeof(value));
+        offset += sizeof(value);
+        return ntohs(value);
+    };
+    auto readFloat = [&]() {
+        const auto bits = readU32();
+        float value;
+        static_assert(sizeof(value) == sizeof(bits), "Expected 32-bit float");
+        std::memcpy(&value, &bits, sizeof(value));
+        return value;
+    };
+
+    Protocol::CombatEvent next{};
+    next.serverTick = readU32();
+    next.eventId = readU32();
+    next.eventType = static_cast<Protocol::CombatEventType>(readU16());
+    next.sourcePlayerId = readU32();
+    next.projectileId = readU32();
+    next.targetKind = static_cast<Protocol::TargetKind>(static_cast<std::uint8_t>(body[offset++]));
+    next.targetId = readU32();
+    next.position = { readFloat(), readFloat(), readFloat() };
+    const auto damage = readU32();
+    if (damage > INT32_MAX) return false;
+    next.damage = static_cast<std::int32_t>(damage);
+    if (!isValidCombatEvent(next)) return false;
+    event = next;
+    return true;
+}
+
+struct EventReceiveState {
+    std::uint32_t lastEventId = 0;
+};
+
+// 게임 스레드에서 효과만 재생합니다. 체력·파괴 상태·클리어는 snapshot/delta가 확정합니다.
+bool applyEvent(const Protocol::CombatEvent& event, EventReceiveState& state)
+{
+    if (!isValidCombatEvent(event)) return false;
+    // TCP에서 이벤트 ID는 세션 동안 증가합니다. 중복/지난 ID는 정상적으로 무시합니다.
+    if (event.eventId <= state.lastEventId) return true;
+
+    const glm::vec3 position(event.position.x, event.position.y, event.position.z);
+    const bool asteroid = event.targetKind == Protocol::TargetKind::Asteroid;
+    switch (event.eventType) {
+    case Protocol::CombatEventType::Hit:
+        spawnExplosion(position, asteroid ? glm::vec3(0.5f, 0.4f, 0.3f)
+            : glm::vec3(0.1f, 0.5f, 0.2f), asteroid ? 3 : 5);
+        break;
+    case Protocol::CombatEventType::Destroyed:
+        spawnExplosion(position, asteroid ? glm::vec3(0.8f, 0.3f, 0.1f)
+            : glm::vec3(1.0f, 0.1f, 0.0f), asteroid ? 30 : 100);
+        break;
+    case Protocol::CombatEventType::SunExplosion:
+        spawnExplosion(position, glm::vec3(1.0f), 500);
+        break;
+    }
+    state.lastEventId = event.eventId;
+    return true;
+}
+
+// 한 세션에서 한 스냅샷씩 조립하며 이벤트 중복 기록도 새 접속마다 초기화합니다.
 struct SnapshotReceiveState {
     std::uint32_t sessionId = 0;
     std::uint32_t nextSequence = 2; // 참가 승인 프레임은 1입니다.
@@ -2033,6 +2134,7 @@ struct SnapshotReceiveState {
     std::uint32_t totalBytes = 0;
     std::vector<char> body;
     std::chrono::steady_clock::time_point startedAt{};
+    EventReceiveState events;
 };
 
 bool receiveSnapshotChunk(const std::vector<char>& chunk, SnapshotReceiveState& state)
@@ -2087,7 +2189,7 @@ void receiveServerSnapshots()
         state.sessionId = connection.sessionId();
     }
     auto fail = [&]() {
-        std::cerr << u8"[클라이언트] 스냅샷 수신 실패로 연결을 종료합니다." << std::endl;
+        std::cerr << u8"[클라이언트] 서버 메시지 수신 실패로 연결을 종료합니다." << std::endl;
         connection.disconnect();
         state = {};
     };
@@ -2118,6 +2220,13 @@ void receiveServerSnapshots()
                 !receiveSnapshotChunk(frame.body, state)) {
                 fail();
                 return;
+            }
+            if (frame.header.type == Protocol::MessageType::COMBAT_EVENT) {
+                Protocol::CombatEvent event{};
+                if (!decodeCombatEventBody(frame.body, event) || !applyEvent(event, state.events)) {
+                    fail();
+                    return;
+                }
             }
         }
     } catch (const std::bad_alloc&) {
