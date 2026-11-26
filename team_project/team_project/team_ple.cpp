@@ -843,6 +843,13 @@ static float missileHitFraction(const glm::vec3& start, const glm::vec3& travel,
 
 static bool hostingNetworkGame = false;
 
+static void publishMissileEvent(Protocol::CombatEventType type, const MissileData& missile,
+    Protocol::TargetKind targetKind, std::uint32_t targetId, const glm::vec3& position, int damage) {
+    if (!hostingNetworkGame) return;
+    publishEvent({ static_cast<std::uint32_t>(worldTick), 0, type, missile.ownerPlayerId,
+        missile.projectileId, targetKind, targetId, { position.x, position.y, position.z }, damage });
+}
+
 static void resolveMissileHit(MissileData& missile, const glm::vec3& start) {
     float firstHit = std::numeric_limits<float>::infinity();
     PlanetData* hitPlanet = nullptr;
@@ -876,9 +883,13 @@ static void resolveMissileHit(MissileData& missile, const glm::vec3& start) {
     missile.active = false;
     if (hitPlanet) {
         auto& planet = *hitPlanet;
-        planet.health -= 10;
+        const auto planetId = static_cast<std::uint32_t>(hitPlanet - planets.data() + 1);
+        constexpr int damage = 10;
+        planet.health -= damage;
         const glm::vec3 impact = start + missile.velocity * firstHit;
         spawnExplosion(impact, glm::vec3(0.1f, 0.5f, 0.2f), 5);
+        publishMissileEvent(Protocol::CombatEventType::Hit, missile, Protocol::TargetKind::Planet,
+            planetId, impact, damage);
         if (planet.health > 0) {
             const float hpRatio = static_cast<float>(planet.health) / (planet.initialSize * 10.0f);
             planet.size = planet.initialSize * (0.5f + 0.5f * hpRatio);
@@ -887,18 +898,25 @@ static void resolveMissileHit(MissileData& missile, const glm::vec3& start) {
             planet.size = 0.0f;
             planet.active = false;
             spawnExplosion(hitCenter, glm::vec3(1.0f, 0.1f, 0.0f), 100);
+            publishMissileEvent(Protocol::CombatEventType::Destroyed, missile, Protocol::TargetKind::Planet,
+                planetId, hitCenter, 0);
             printf("Planet %s was destroyed!\n", planet.name.c_str());
         }
     } else {
         auto& asteroid = *hitAsteroid;
-        --asteroid.health;
+        constexpr int damage = 1;
+        asteroid.health -= damage;
         spawnExplosion(hitCenter, glm::vec3(0.5f, 0.4f, 0.3f), 3);
+        publishMissileEvent(Protocol::CombatEventType::Hit, missile, Protocol::TargetKind::Asteroid,
+            asteroid.asteroidId, hitCenter, damage);
         if (asteroid.health > 0) {
             const float hpRatio = static_cast<float>(asteroid.health) / (asteroid.initialSize * 3.0f);
             asteroid.size = asteroid.initialSize * (0.4f + 0.6f * hpRatio);
         } else {
             asteroid.size = 0.0f;
             spawnExplosion(hitCenter, glm::vec3(0.8f, 0.3f, 0.1f), 30);
+            publishMissileEvent(Protocol::CombatEventType::Destroyed, missile, Protocol::TargetKind::Asteroid,
+                asteroid.asteroidId, hitCenter, 0);
         }
     }
 }
@@ -956,6 +974,10 @@ void updateGameLogic() {
 
             // 마지막 대폭발 이펙트
             spawnExplosion(glm::vec3(0, 0, 0), glm::vec3(1, 1, 1), 500);
+            if (hostingNetworkGame) {
+                publishEvent({ static_cast<std::uint32_t>(worldTick), 0, Protocol::CombatEventType::SunExplosion,
+                    0, 0, Protocol::TargetKind::Sun, 0, { 0.0f, 0.0f, 0.0f }, 0 });
+            }
             printf("\n\n*** SUN DESTROYED! UNIVERSE IS DOOMED! ***\n\n");
 
             isRotating = false;

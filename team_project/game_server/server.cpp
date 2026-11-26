@@ -2,6 +2,8 @@
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <utility>
+#include <cmath>
+#include <limits>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +17,7 @@
 namespace {
 constexpr unsigned short kServerPort = Protocol::PORT;
 constexpr std::size_t kMaxClients = 1;
+constexpr std::size_t kMaxQueuedFrames = 256;
 
 constexpr std::uint32_t kHostPlayerId = Protocol::HOST_PLAYER_ID;
 constexpr std::chrono::seconds kJoinRequestTimeout{5};
@@ -26,7 +29,9 @@ struct ClientSession {
     std::vector<char> receiveBuffer;
     SendState sendState;
     std::uint32_t nextSendSequence = 1;
+    std::uint32_t nextEventId = 1;
     bool joinValidated = false;
+    bool sendFailed = false;
     std::chrono::steady_clock::time_point connectedAt = std::chrono::steady_clock::now();
 };
 
@@ -59,6 +64,7 @@ void writeNetworkU32(unsigned char* bytes, std::uint32_t value) {
 }
 
 bool enqueueFrame(ClientSession& client, Protocol::MessageType type, const std::vector<char>& body) {
+    if (client.sendState.sendQueue.size() >= kMaxQueuedFrames) return false;
     std::vector<char> frame;
     if (!encodeFrame(type, client.nextSendSequence, body, frame)) return false;
     client.sendState.sendQueue.push_back(std::move(frame));
@@ -217,7 +223,7 @@ bool pollServer(ServerResources& server, long waitMicros) {
     }
     for (size_t i = 0; i < server.clients.size();) {
         ClientSession& client = server.clients[i];
-        bool keepConnection = true;
+        bool keepConnection = !client.sendFailed;
         if (!client.joinValidated &&
             std::chrono::steady_clock::now() - client.connectedAt >= kJoinRequestTimeout) {
             std::cerr << "[Server] Join request timed out. Player ID: " << client.playerId
@@ -257,6 +263,30 @@ bool pollServer(ServerResources& server, long waitMicros) {
 #ifdef NETGAME_EMBEDDED_SERVER
 ServerResources hostServer;
 
+void writeNetworkFloat(unsigned char* bytes, float value) {
+    static_assert(sizeof(float) == sizeof(std::uint32_t) && std::numeric_limits<float>::is_iec559,
+        "Combat events require IEEE 754 binary32");
+    std::uint32_t bits;
+    std::memcpy(&bits, &value, sizeof(bits));
+    writeNetworkU32(bytes, bits);
+}
+
+std::vector<char> encodeCombatEventBody(const Protocol::CombatEvent& event, std::uint32_t eventId) {
+    std::vector<char> body(Protocol::COMBAT_EVENT_BODY_SIZE);
+    auto* bytes = reinterpret_cast<unsigned char*>(body.data());
+    writeNetworkU32(bytes, event.serverTick);
+    writeNetworkU32(bytes + 4, eventId);
+    writeNetworkU16(bytes + 8, static_cast<std::uint16_t>(event.eventType));
+    writeNetworkU32(bytes + 10, event.sourcePlayerId);
+    writeNetworkU32(bytes + 14, event.projectileId);
+    bytes[18] = static_cast<unsigned char>(event.targetKind);
+    writeNetworkU32(bytes + 19, event.targetId);
+    writeNetworkFloat(bytes + 23, event.position.x);
+    writeNetworkFloat(bytes + 27, event.position.y);
+    writeNetworkFloat(bytes + 31, event.position.z);
+    writeNetworkU32(bytes + 35, static_cast<std::uint32_t>(event.damage));
+    return body;
+}
 #endif
 }
 
@@ -269,6 +299,22 @@ bool pollHostServer() {
     return pollServer(hostServer, 0);
 }
 
+void publishEvent(const Protocol::CombatEvent& event) {
+    if (!std::isfinite(event.position.x) || !std::isfinite(event.position.y) ||
+        !std::isfinite(event.position.z) || event.damage < 0) return;
+
+    for (auto& client : hostServer.clients) {
+        if (!client.joinValidated || client.sendFailed) continue;
+        if (client.nextEventId == 0 || !enqueueFrame(client, Protocol::MessageType::COMBAT_EVENT,
+            encodeCombatEventBody(event, client.nextEventId))) {
+            // 이벤트를 덮어쓰거나 건너뛰면 참가자마다 연출 순서가 달라진다.
+            std::cerr << "[Server] Cannot queue combat event. Closing session " << client.sessionId << std::endl;
+            client.sendFailed = true;
+            continue;
+        }
+        ++client.nextEventId;
+    }
+}
 #else
 int main() {
     ServerResources server;
