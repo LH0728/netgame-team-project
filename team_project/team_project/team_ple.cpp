@@ -46,6 +46,7 @@ struct PlanetData {
 };
 
 struct AsteroidData {
+    std::uint32_t asteroidId;
     glm::vec3 position;
     glm::vec3 velocity;
     float size;
@@ -551,6 +552,7 @@ void initAsteroids() {
     asteroids.clear();
     for (int i = 0; i < asteroidCount; ++i) {
         AsteroidData a;
+        a.asteroidId = static_cast<std::uint32_t>(i + 1);
         float range = 450.0f;
         a.position = glm::vec3(
             (static_cast<float>(rand()) / RAND_MAX * 2.0f * range) - range,
