@@ -2408,7 +2408,7 @@ void Timer(int value) {
     runClientTick();
     if (connection.sessionId() == 0) {
         runHostTick();
-        if (hostingNetworkGame && !pollHostServer()) {
+        if (hostingNetworkGame && !pollHostServer(static_cast<std::uint32_t>(worldTick + 1))) {
             glutLeaveMainLoop();
             return;
         }

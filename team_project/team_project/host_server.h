@@ -5,7 +5,7 @@
 
 // GLUT 게임 스레드에서 접속 관리, 전투 이벤트 등록, 소켓 송신을 순서대로 처리한다.
 bool startHostServer();
-bool pollHostServer();
+bool pollHostServer(std::uint32_t nextWorldTick);
 // 현재 승인된 원격 참가자의 ID. 빈 슬롯이나 승인 대기 중이면 0이다.
 std::uint32_t joinedHostPlayerId();
 bool hostNeedsWorldInit(std::uint32_t playerId);

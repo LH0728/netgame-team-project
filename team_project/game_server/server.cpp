@@ -33,6 +33,7 @@ struct ClientSession {
     std::uint32_t nextEventId = 1;
     bool joinValidated = false;
     bool initialWorldQueued = false;
+    bool matchStartQueued = false;
     bool sendFailed = false;
     std::chrono::steady_clock::time_point connectedAt = std::chrono::steady_clock::now();
 };
@@ -75,11 +76,6 @@ bool enqueueFrame(ClientSession& client, Protocol::MessageType type, const std::
 }
 
 bool consumeJoinRequest(ClientSession& client, const char* bytes, std::size_t count) {
-    // This handler owns admission only. Gameplay dispatch is the next host step.
-    if (client.joinValidated) {
-        std::cerr << "[Server] Post-JOIN message handling is not implemented yet." << std::endl;
-        return false;
-    }
     // A JOIN request has no body. Keep the original admission buffer limit.
     if (count > Protocol::HEADER_SIZE - client.receiveBuffer.size()) {
         std::cerr << "[Server] Join rejected: request must contain one empty-body frame." << std::endl;
@@ -114,6 +110,41 @@ bool consumeJoinRequest(ClientSession& client, const char* bytes, std::size_t co
 
     std::cout << "[Server] Join request validated. Player ID: " << client.playerId
         << " | Session ID: " << client.sessionId << std::endl;
+    return true;
+}
+
+bool consumeClientReady(ClientSession& client, const char* bytes, std::size_t count, std::uint32_t nextWorldTick) {
+    if (!client.initialWorldQueued || client.matchStartQueued) return false;
+    const auto isWorldInit = [](const std::vector<char>& frame) {
+        std::uint16_t type;
+        std::memcpy(&type, frame.data() + Protocol::HeaderOffset::TYPE, sizeof(type));
+        return ntohs(type) == static_cast<std::uint16_t>(Protocol::MessageType::WORLD_STATE_INIT);
+    };
+    // 초기 월드의 마지막 바이트까지 송신한 뒤에만 준비 완료를 받는다.
+    if (std::any_of(client.sendState.sendQueue.begin(), client.sendState.sendQueue.end(), isWorldInit)) return false;
+
+    constexpr auto readyFrameSize = Protocol::HEADER_SIZE + Protocol::CLIENT_READY_BODY_SIZE;
+    if (count > readyFrameSize - client.receiveBuffer.size()) return false;
+    client.receiveBuffer.insert(client.receiveBuffer.end(), bytes, bytes + count);
+    std::vector<DecodedFrame> frames;
+    if (!decodeFrames(client.receiveBuffer, frames)) return false;
+    if (frames.empty()) return client.receiveBuffer.size() < readyFrameSize;
+    if (frames.size() != 1 || !client.receiveBuffer.empty()) return false;
+
+    const auto& frame = frames.front();
+    if (frame.header.type != Protocol::MessageType::CLIENT_READY ||
+        frame.header.sequence != 2 || frame.body.size() != Protocol::CLIENT_READY_BODY_SIZE) return false;
+
+    std::uint32_t initializationId;
+    std::memcpy(&initializationId, frame.body.data(), sizeof(initializationId));
+    if (ntohl(initializationId) != client.sessionId) return false;
+
+    std::vector<char> startBody(Protocol::MATCH_START_BODY_SIZE);
+    auto* startBytes = reinterpret_cast<unsigned char*>(startBody.data());
+    writeNetworkU32(startBytes, client.sessionId);
+    writeNetworkU32(startBytes + 4, nextWorldTick);
+    if (!enqueueFrame(client, Protocol::MessageType::MATCH_START, startBody)) return false;
+    client.matchStartQueued = true;
     return true;
 }
 
@@ -207,7 +238,8 @@ bool startServer(ServerResources& server) {
     return true;
 }
 
-bool pollServer(ServerResources& server, long waitMicros) {
+bool pollServer(ServerResources& server, long waitMicros,
+    const std::uint32_t* nextWorldTick = nullptr) {
     fd_set readable, writable;
     FD_ZERO(&readable);
     FD_ZERO(&writable);
@@ -235,9 +267,18 @@ bool pollServer(ServerResources& server, long waitMicros) {
         if (keepConnection && FD_ISSET(client.socket, &readable)) {
             char buffer[256];
             const int received = recv(client.socket, buffer, sizeof(buffer), 0);
-            if (received > 0)
-                keepConnection = consumeJoinRequest(client, buffer, static_cast<std::size_t>(received));
-            else if (received == 0)
+            if (received > 0) {
+                const auto count = static_cast<std::size_t>(received);
+                if (!client.joinValidated) {
+                    keepConnection = consumeJoinRequest(client, buffer, count);
+                } else {
+                    keepConnection = nextWorldTick != nullptr &&
+                        consumeClientReady(client, buffer, count, *nextWorldTick);
+                    if (!keepConnection) {
+                        std::cerr << "[Server] Unexpected message after JOIN. Closing session " << client.sessionId << std::endl;
+                    }
+                }
+            } else if (received == 0)
                 keepConnection = false;
             else if (WSAGetLastError() != WSAEWOULDBLOCK)
                 keepConnection = false;
@@ -297,8 +338,8 @@ bool startHostServer() {
     return startServer(hostServer);
 }
 
-bool pollHostServer() {
-    return pollServer(hostServer, 0);
+bool pollHostServer(std::uint32_t nextWorldTick) {
+    return pollServer(hostServer, 0, &nextWorldTick);
 }
 
 std::uint32_t joinedHostPlayerId() {
