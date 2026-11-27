@@ -2099,30 +2099,7 @@ bool decodeSnapshotBody(const std::vector<char>& body, WorldSnapshot& snapshot)
 // Protocol.h의 공용 타입을 검증하며, 이미 사라진 대상도 위치만으로 효과를 재생합니다.
 bool isValidCombatEvent(const Protocol::CombatEvent& event)
 {
-    if (event.eventId == 0 || event.damage < 0 ||
-        !std::isfinite(event.position.x) || !std::isfinite(event.position.y) ||
-        !std::isfinite(event.position.z)) return false;
-
-    switch (event.eventType) {
-    case Protocol::CombatEventType::Hit:
-    case Protocol::CombatEventType::Destroyed:
-    case Protocol::CombatEventType::SunExplosion:
-        break;
-    default:
-        return false;
-    }
-    switch (event.targetKind) {
-    case Protocol::TargetKind::None:
-    case Protocol::TargetKind::Sun:
-        return event.targetId == 0;
-    case Protocol::TargetKind::Planet:
-        return event.targetId != 0 && event.targetId <= Protocol::MAX_PLANETS;
-    case Protocol::TargetKind::Player:
-    case Protocol::TargetKind::Asteroid:
-        return event.targetId != 0;
-    default:
-        return false;
-    }
+    return event.eventId != 0 && Protocol::isValidCombatEventPayload(event);
 }
 
 // 구조체의 패딩을 복사하지 않고, 공용 본문 순서와 네트워크 바이트 순서로 읽습니다.

@@ -304,6 +304,34 @@ namespace Protocol
     };
     constexpr std::size_t COMBAT_EVENT_BODY_SIZE = 39;
 
+    // 이벤트 ID는 송신 큐에 넣을 때 세션별로 부여한다.
+    inline bool isValidCombatEventPayload(const CombatEvent& event) {
+        if (event.damage < 0 || !std::isfinite(event.position.x) ||
+            !std::isfinite(event.position.y) || !std::isfinite(event.position.z)) return false;
+
+        switch (event.eventType) {
+        case CombatEventType::Hit:
+        case CombatEventType::Destroyed:
+        case CombatEventType::SunExplosion:
+            break;
+        default:
+            return false;
+        }
+
+        switch (event.targetKind) {
+        case TargetKind::None:
+        case TargetKind::Sun:
+            return event.targetId == 0;
+        case TargetKind::Planet:
+            return event.targetId != 0 && event.targetId <= MAX_PLANETS;
+        case TargetKind::Player:
+        case TargetKind::Asteroid:
+            return event.targetId != 0;
+        default:
+            return false;
+        }
+    }
+
     struct Heartbeat { // 요청/응답 모두 같은 본문, 양방향
         std::uint32_t requestId;
     };

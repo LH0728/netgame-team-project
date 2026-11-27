@@ -3,7 +3,6 @@
 #include <ws2tcpip.h>
 #include <algorithm>
 #include <utility>
-#include <cmath>
 #include <limits>
 #include <chrono>
 #include <cstddef>
@@ -452,8 +451,7 @@ void queueHostWorldInit(std::uint32_t playerId, const std::vector<char>& body) {
 }
 
 void publishEvent(const Protocol::CombatEvent& event) {
-    if (!std::isfinite(event.position.x) || !std::isfinite(event.position.y) ||
-        !std::isfinite(event.position.z) || event.damage < 0) return;
+    if (!Protocol::isValidCombatEventPayload(event)) return;
 
     for (auto& client : hostServer.clients) {
         if (!client.joinValidated || client.sendFailed) continue;
