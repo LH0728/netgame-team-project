@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <algorithm>
 #include <utility>
 #include <cmath>
 #include <limits>
@@ -31,6 +32,7 @@ struct ClientSession {
     std::uint32_t nextSendSequence = 1;
     std::uint32_t nextEventId = 1;
     bool joinValidated = false;
+    bool initialWorldQueued = false;
     bool sendFailed = false;
     std::chrono::steady_clock::time_point connectedAt = std::chrono::steady_clock::now();
 };
@@ -304,6 +306,45 @@ std::uint32_t joinedHostPlayerId() {
         if (client.joinValidated && !client.sendFailed) return client.playerId;
     }
     return 0;
+}
+
+bool hostNeedsWorldInit(std::uint32_t playerId) {
+    for (const auto& client : hostServer.clients) {
+        if (client.playerId == playerId) {
+            return client.joinValidated && !client.initialWorldQueued && !client.sendFailed;
+        }
+    }
+    return false;
+}
+
+void queueHostWorldInit(std::uint32_t playerId, const std::vector<char>& body) {
+    for (auto& client : hostServer.clients) {
+        if (client.playerId != playerId || !client.joinValidated ||
+            client.initialWorldQueued || client.sendFailed) continue;
+        if (body.size() < Protocol::WORLD_INIT_HEADER_SIZE || body.size() > UINT32_MAX) {
+            std::cerr << "[Server] Cannot build initial world. Closing session " << client.sessionId << std::endl;
+            client.sendFailed = true;
+            return;
+        }
+
+        for (std::size_t offset = 0; offset < body.size();) {
+            const std::size_t count = (std::min)(body.size() - offset, Protocol::MAX_INIT_CHUNK_DATA_SIZE);
+            std::vector<char> chunk(Protocol::WORLD_INIT_CHUNK_HEADER_SIZE + count);
+            auto* header = reinterpret_cast<unsigned char*>(chunk.data());
+            writeNetworkU32(header, client.sessionId); // 한 세션마다 초기화는 한 번이다.
+            writeNetworkU32(header + 4, static_cast<std::uint32_t>(body.size()));
+            writeNetworkU32(header + 8, static_cast<std::uint32_t>(offset));
+            std::memcpy(chunk.data() + Protocol::WORLD_INIT_CHUNK_HEADER_SIZE, body.data() + offset, count);
+            if (!enqueueFrame(client, Protocol::MessageType::WORLD_STATE_INIT, chunk)) {
+                std::cerr << "[Server] Cannot queue initial world. Closing session " << client.sessionId << std::endl;
+                client.sendFailed = true;
+                return;
+            }
+            offset += count;
+        }
+        client.initialWorldQueued = true;
+        return;
+    }
 }
 
 void publishEvent(const Protocol::CombatEvent& event) {

@@ -1851,6 +1851,50 @@ bool encodeSnapshotBody(const WorldSnapshot& snapshot, std::vector<char>& body) 
 }
 
 // 수신 모듈은 조각을 전부 조립하고 해석한 뒤 게임 스레드에서 호출합니다.
+static bool encodeWorldInitBody(const WorldSnapshot& snapshot, std::vector<char>& body) {
+    // 이미 검증한 스냅샷의 공통 필드와 레코드를 초기 월드의 순서로 배치한다.
+    std::vector<char> snapshotBody;
+    if (asteroids.size() > Protocol::MAX_ASTEROIDS || !encodeSnapshotBody(snapshot, snapshotBody)) return false;
+
+    const auto& header = snapshot.header;
+    constexpr std::uint32_t nominalTickRate = (1000 + worldTickMs / 2) / worldTickMs;
+    std::vector<char> bytes;
+    bytes.reserve(snapshotBody.size() + (Protocol::WORLD_INIT_HEADER_SIZE - Protocol::WORLD_SNAPSHOT_HEADER_SIZE)
+        + asteroids.size() * Protocol::ASTEROID_STATE_SIZE);
+    appendSnapshotU32(bytes, header.serverTick);
+    appendSnapshotU32(bytes, nominalTickRate);
+    const auto world = snapshotBody.cbegin() + sizeof(std::uint32_t);
+    bytes.insert(bytes.end(), world, world + Protocol::WORLD_STATE_SIZE);
+    appendSnapshotU32(bytes, header.playerCount);
+    appendSnapshotU32(bytes, header.planetCount);
+    appendSnapshotU32(bytes, static_cast<std::uint32_t>(asteroids.size()));
+    appendSnapshotU32(bytes, header.projectileCount);
+
+    const auto players = snapshotBody.cbegin() + Protocol::WORLD_SNAPSHOT_HEADER_SIZE;
+    const auto projectiles = players + std::size_t(header.playerCount) * Protocol::PLAYER_STATE_SIZE;
+    const auto planetRecords = projectiles + std::size_t(header.projectileCount) * Protocol::PROJECTILE_STATE_SIZE;
+    bytes.insert(bytes.end(), players, projectiles);
+    bytes.insert(bytes.end(), planetRecords, snapshotBody.cend());
+
+    constexpr float asteroidTimeUnitsPerSecond = 0.5f / worldTickSeconds;
+    for (const auto& asteroid : asteroids) {
+        if (asteroid.asteroidId == 0 || asteroid.health <= 0) return false;
+        const glm::vec3 position = asteroid.position + asteroid.velocity * globalTime;
+        const glm::vec3 velocity = asteroid.velocity * asteroidTimeUnitsPerSecond;
+        appendSnapshotU32(bytes, asteroid.asteroidId);
+        if (!appendSnapshotFloats(bytes, {
+            position.x, position.y, position.z, velocity.x, velocity.y, velocity.z,
+            asteroid.size, asteroid.initialSize, asteroid.rotationSpeed * globalTime,
+            asteroid.rotationSpeed * asteroidTimeUnitsPerSecond,
+            asteroid.rotationAxis.x, asteroid.rotationAxis.y, asteroid.rotationAxis.z
+        })) return false;
+        appendSnapshotU32(bytes, static_cast<std::uint32_t>(asteroid.health));
+    }
+    bytes.insert(bytes.end(), projectiles, planetRecords);
+    body.swap(bytes);
+    return true;
+}
+
 // 원격 기체는 ID와 함께 보관하고, 내 기체는 기존 카메라와 이동 변수에 반영합니다.
 std::vector<Protocol::PlayerState> snapshotPlayers;
 
@@ -2326,6 +2370,13 @@ void runHostTick(std::uint32_t inputPlayerId = 0, const Protocol::PlayerInput& g
         hostGuestShip = initialShipState;
         hostGuestShip.playerId = guestId;
         guestMissileLauncher = MissileLauncher{guestId};
+    }
+
+    // 기존 월드를 먼저 보내고, 이번 틱의 전투 이벤트는 그 뒤에 큐에 넣는다.
+    if (guestId != 0 && hostNeedsWorldInit(guestId)) {
+        std::vector<char> body;
+        if (!encodeWorldInitBody(captureWorldSnapshot(), body)) body.clear();
+        queueHostWorldInit(guestId, body);
     }
 
     ++worldTick;
