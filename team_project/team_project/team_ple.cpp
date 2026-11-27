@@ -115,9 +115,11 @@ const float missileRange = 5000.0f;
 const float PI = 3.1415926535f;
 
 // 우주선(플레이어)
-glm::vec3 shipPos(0.0f, 500.0f, 1500.0f);
-float shipAngle = 180.0f;
-float shipPitch = 0.0f;
+constexpr Protocol::PlayerState initialShipState{ 0, { 0.0f, 500.0f, 1500.0f }, 180.0f, 0.0f };
+glm::vec3 shipPos(initialShipState.position.x, initialShipState.position.y, initialShipState.position.z);
+float shipAngle = initialShipState.yaw;
+float shipPitch = initialShipState.pitch;
+static Protocol::PlayerState hostGuestShip{}; // 호스트가 관리하는 원격 기체. ID 0은 빈 슬롯이다.
 bool keyState[256] = { false };
 
 // 마우스 제어
@@ -1751,6 +1753,7 @@ WorldSnapshot captureWorldSnapshot() {
     world.sunExplosionTime = sunExplosionTimer * (worldTickSeconds / sunExplosionTimeStep);
 
     snapshot.players.push_back(captureLocalPlayerState(Protocol::HOST_PLAYER_ID));
+    if (hostGuestShip.playerId != 0) snapshot.players.push_back(hostGuestShip);
     snapshot.projectiles = captureActiveProjectiles();
     snapshot.planets = capturePlanetStates();
     header.playerCount = static_cast<std::uint32_t>(snapshot.players.size());
@@ -2295,6 +2298,12 @@ void runClientTick() {
 }
 
 void runHostTick() {
+    const auto guestId = hostingNetworkGame ? joinedHostPlayerId() : 0u;
+    if (guestId != hostGuestShip.playerId) {
+        hostGuestShip = initialShipState;
+        hostGuestShip.playerId = guestId;
+    }
+
     ++worldTick;
     globalTime = static_cast<float>(worldTick) * 0.5f;
     if (isLeftButtonDown) fireMissile();

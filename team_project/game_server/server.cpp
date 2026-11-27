@@ -299,6 +299,13 @@ bool pollHostServer() {
     return pollServer(hostServer, 0);
 }
 
+std::uint32_t joinedHostPlayerId() {
+    for (const auto& client : hostServer.clients) {
+        if (client.joinValidated && !client.sendFailed) return client.playerId;
+    }
+    return 0;
+}
+
 void publishEvent(const Protocol::CombatEvent& event) {
     if (!std::isfinite(event.position.x) || !std::isfinite(event.position.y) ||
         !std::isfinite(event.position.z) || event.damage < 0) return;
