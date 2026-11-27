@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -245,6 +246,13 @@ namespace Protocol
         float pitch;
     };
     constexpr std::size_t PLAYER_INPUT_BODY_SIZE = 14;
+
+    inline bool isValidPlayerInput(const PlayerInput& input) {
+        return (input.buttons & ~INPUT_MASK) == 0 &&
+            std::isfinite(input.yaw) && std::isfinite(input.pitch) &&
+            input.yaw >= 0.0f && input.yaw < 360.0f &&
+            input.pitch >= -89.0f && input.pitch <= 89.0f;
+    }
     // 플레이어는 소켓의 세션으로 식별한다. 입력은 다음 서버 틱부터 적용한다.
     // 이동/가속은 PlayerState와 같은 방향 기준. Fire는 서버 발사 간격을 적용한다.
     // 카메라 모드와 무관하게 yaw/pitch는 실제 기체/발사 방향이다.

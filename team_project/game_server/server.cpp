@@ -31,6 +31,9 @@ struct ClientSession {
     SendState sendState;
     std::uint32_t nextSendSequence = 1;
     std::uint32_t nextEventId = 1;
+    std::uint32_t nextInputSequence = 3; // JOIN 요청은 1, CLIENT_READY는 2를 사용한다.
+    Protocol::PlayerInput latestInput{};
+    bool hasInput = false;
     bool joinValidated = false;
     bool initialWorldQueued = false;
     bool matchStartQueued = false;
@@ -64,6 +67,30 @@ void writeNetworkU16(unsigned char* bytes, std::uint16_t value) {
 void writeNetworkU32(unsigned char* bytes, std::uint32_t value) {
     writeNetworkU16(bytes, static_cast<std::uint16_t>(value >> 16));
     writeNetworkU16(bytes + 2, static_cast<std::uint16_t>(value));
+}
+
+std::uint32_t readNetworkU32(const char* bytes) {
+    std::uint32_t value;
+    std::memcpy(&value, bytes, sizeof(value));
+    return ntohl(value);
+}
+
+float readNetworkFloat(const char* bytes) {
+    static_assert(sizeof(float) == sizeof(std::uint32_t) && std::numeric_limits<float>::is_iec559,
+        "Player input requires IEEE 754 binary32");
+    const auto bits = readNetworkU32(bytes);
+    float value;
+    std::memcpy(&value, &bits, sizeof(value));
+    return value;
+}
+
+bool hasQueuedFrame(const ClientSession& client, Protocol::MessageType messageType) {
+    const auto matches = [messageType](const std::vector<char>& frame) {
+        std::uint16_t type;
+        std::memcpy(&type, frame.data() + Protocol::HeaderOffset::TYPE, sizeof(type));
+        return ntohs(type) == static_cast<std::uint16_t>(messageType);
+    };
+    return std::any_of(client.sendState.sendQueue.begin(), client.sendState.sendQueue.end(), matches);
 }
 
 bool enqueueFrame(ClientSession& client, Protocol::MessageType type, const std::vector<char>& body) {
@@ -115,13 +142,8 @@ bool consumeJoinRequest(ClientSession& client, const char* bytes, std::size_t co
 
 bool consumeClientReady(ClientSession& client, const char* bytes, std::size_t count, std::uint32_t nextWorldTick) {
     if (!client.initialWorldQueued || client.matchStartQueued) return false;
-    const auto isWorldInit = [](const std::vector<char>& frame) {
-        std::uint16_t type;
-        std::memcpy(&type, frame.data() + Protocol::HeaderOffset::TYPE, sizeof(type));
-        return ntohs(type) == static_cast<std::uint16_t>(Protocol::MessageType::WORLD_STATE_INIT);
-    };
     // 초기 월드의 마지막 바이트까지 송신한 뒤에만 준비 완료를 받는다.
-    if (std::any_of(client.sendState.sendQueue.begin(), client.sendState.sendQueue.end(), isWorldInit)) return false;
+    if (hasQueuedFrame(client, Protocol::MessageType::WORLD_STATE_INIT)) return false;
 
     constexpr auto readyFrameSize = Protocol::HEADER_SIZE + Protocol::CLIENT_READY_BODY_SIZE;
     if (count > readyFrameSize - client.receiveBuffer.size()) return false;
@@ -135,9 +157,7 @@ bool consumeClientReady(ClientSession& client, const char* bytes, std::size_t co
     if (frame.header.type != Protocol::MessageType::CLIENT_READY ||
         frame.header.sequence != 2 || frame.body.size() != Protocol::CLIENT_READY_BODY_SIZE) return false;
 
-    std::uint32_t initializationId;
-    std::memcpy(&initializationId, frame.body.data(), sizeof(initializationId));
-    if (ntohl(initializationId) != client.sessionId) return false;
+    if (readNetworkU32(frame.body.data()) != client.sessionId) return false;
 
     std::vector<char> startBody(Protocol::MATCH_START_BODY_SIZE);
     auto* startBytes = reinterpret_cast<unsigned char*>(startBody.data());
@@ -145,6 +165,38 @@ bool consumeClientReady(ClientSession& client, const char* bytes, std::size_t co
     writeNetworkU32(startBytes + 4, nextWorldTick);
     if (!enqueueFrame(client, Protocol::MessageType::MATCH_START, startBody)) return false;
     client.matchStartQueued = true;
+    return true;
+}
+
+bool consumePlayerInput(ClientSession& client, const char* bytes, std::size_t count) {
+    if (hasQueuedFrame(client, Protocol::MessageType::MATCH_START)) return false;
+
+    client.receiveBuffer.insert(client.receiveBuffer.end(), bytes, bytes + count);
+    std::vector<DecodedFrame> frames;
+    constexpr auto inputFrameSize = Protocol::HEADER_SIZE + Protocol::PLAYER_INPUT_BODY_SIZE;
+    // 완성된 프레임을 처리하고 나면 올바른 미완성 입력은 26바이트 미만이다.
+    if (!decodeFrames(client.receiveBuffer, frames) || client.receiveBuffer.size() >= inputFrameSize) return false;
+
+    for (const auto& frame : frames) {
+        if (frame.header.type != Protocol::MessageType::PLAYER_INPUT ||
+            frame.header.sequence != client.nextInputSequence ||
+            frame.body.size() != Protocol::PLAYER_INPUT_BODY_SIZE) return false;
+
+        const char* body = frame.body.data();
+        std::uint16_t buttons;
+        std::memcpy(&buttons, body + 4, sizeof(buttons));
+        const Protocol::PlayerInput input{ readNetworkU32(body), ntohs(buttons),
+            readNetworkFloat(body + 6), readNetworkFloat(body + 10) };
+        if (!Protocol::isValidPlayerInput(input)) return false;
+
+        // 헤더 순번은 모든 프레임에서 전진하고, 기체에는 가장 최근 입력만 반영한다.
+        if (++client.nextInputSequence == 0) client.nextInputSequence = 1;
+        const auto tickDifference = input.clientTick - client.latestInput.clientTick;
+        if (!client.hasInput || (tickDifference != 0 && tickDifference < 0x80000000u)) {
+            client.latestInput = input;
+            client.hasInput = true;
+        }
+    }
     return true;
 }
 
@@ -272,8 +324,9 @@ bool pollServer(ServerResources& server, long waitMicros,
                 if (!client.joinValidated) {
                     keepConnection = consumeJoinRequest(client, buffer, count);
                 } else {
-                    keepConnection = nextWorldTick != nullptr &&
-                        consumeClientReady(client, buffer, count, *nextWorldTick);
+                    keepConnection = nextWorldTick != nullptr && (client.matchStartQueued ?
+                        consumePlayerInput(client, buffer, count) :
+                        consumeClientReady(client, buffer, count, *nextWorldTick));
                     if (!keepConnection) {
                         std::cerr << "[Server] Unexpected message after JOIN. Closing session " << client.sessionId << std::endl;
                     }
@@ -345,6 +398,16 @@ bool pollHostServer(std::uint32_t nextWorldTick) {
 std::uint32_t joinedHostPlayerId() {
     for (const auto& client : hostServer.clients) {
         if (client.joinValidated && !client.sendFailed) return client.playerId;
+    }
+    return 0;
+}
+
+std::uint32_t readHostPlayerInput(Protocol::PlayerInput& input) {
+    for (const auto& client : hostServer.clients) {
+        if (client.joinValidated && client.matchStartQueued && client.hasInput && !client.sendFailed) {
+            input = client.latestInput;
+            return client.playerId;
+        }
     }
     return 0;
 }

@@ -1636,17 +1636,10 @@ static Protocol::PlayerInput clientInput{};
 // 입력을 기록한 클라이언트 업데이트 번호다. 실제 시계 시간이 아니다.
 std::uint32_t clientTick = 0;
 
-static bool isValidPlayerInput(const Protocol::PlayerInput& input) {
-    return (input.buttons & ~Protocol::INPUT_MASK) == 0 &&
-        std::isfinite(input.yaw) && std::isfinite(input.pitch) &&
-        input.yaw >= 0.0f && input.yaw < 360.0f &&
-        input.pitch >= -89.0f && input.pitch <= 89.0f;
-}
-
 // 현재 입력을 전송 규칙에 맞는 14바이트 본문으로 만든다.
 // 실제 소켓 송신은 공용 전송 모듈이 처리한다.
 bool sendInput() {
-    if (!isValidPlayerInput(clientInput)) return false;
+    if (!Protocol::isValidPlayerInput(clientInput)) return false;
 
     // 실수의 값이 아닌 비트 모양을 복사하려면 두 자료형이 모두 4바이트여야 한다.
     static_assert(sizeof(float) == sizeof(std::uint32_t), "Expected 32-bit float");
@@ -2388,7 +2381,7 @@ void runHostTick(std::uint32_t inputPlayerId = 0, const Protocol::PlayerInput& g
     const int forwardInput = keyState['w'] - keyState['s'];
     const int strafeInput = keyState['d'] - keyState['a'];
     updateMovement(shipPos, shipAngle, shipPitch, forwardInput, strafeInput, keyState['r']);
-    if (guestId != 0 && inputPlayerId == guestId && isValidPlayerInput(guestInput)) {
+    if (guestId != 0 && inputPlayerId == guestId && Protocol::isValidPlayerInput(guestInput)) {
         applyGuestShipInput(guestInput);
     }
     updateGameLogic();
@@ -2407,7 +2400,9 @@ void Timer(int value) {
     receiveServerSnapshots();
     runClientTick();
     if (connection.sessionId() == 0) {
-        runHostTick();
+        Protocol::PlayerInput guestInput{};
+        const auto inputPlayerId = hostingNetworkGame ? readHostPlayerInput(guestInput) : 0u;
+        runHostTick(inputPlayerId, guestInput);
         if (hostingNetworkGame && !pollHostServer(static_cast<std::uint32_t>(worldTick + 1))) {
             glutLeaveMainLoop();
             return;
