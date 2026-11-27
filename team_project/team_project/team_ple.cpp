@@ -153,6 +153,7 @@ bool isGameCleared = false;
 
 constexpr std::uint64_t missileFireDelayTicks = 10;
 MissileLauncher hostMissileLauncher{Protocol::HOST_PLAYER_ID};
+static MissileLauncher guestMissileLauncher{};
 
 
 // --- 전역 변수 ---
@@ -612,13 +613,19 @@ void updateParticles() {
     }
 }
 
+static glm::vec3 shipForward(float yaw, float pitch) {
+    const float yawRadians = glm::radians(yaw);
+    const float pitchRadians = glm::radians(pitch);
+    return glm::normalize(glm::vec3{
+        std::sin(yawRadians) * std::cos(pitchRadians),
+        std::sin(pitchRadians),
+        std::cos(yawRadians) * std::cos(pitchRadians)
+    });
+}
+
 void updateMovement(glm::vec3& position, float yaw, float pitch,
     int forwardInput, int strafeInput, bool boosting) {
-    glm::vec3 front;
-    front.x = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-    front.y = sin(glm::radians(pitch));
-    front.z = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
-    front = glm::normalize(front);
+    const glm::vec3 front = shipForward(yaw, pitch);
     glm::vec3 right = glm::normalize(glm::cross(front, glm::vec3(0, 1, 0)));
     glm::vec3 moveDir = front * static_cast<float>(forwardInput)
         + right * static_cast<float>(strafeInput);
@@ -708,11 +715,7 @@ void fireMissile() {
 
     GLint viewport[4]; glGetIntegerv(GL_VIEWPORT, viewport);
     glm::vec3 cameraPos, cameraTarget, cameraUp(0, 1, 0);
-    glm::vec3 shipDir;
-    shipDir.x = sin(glm::radians(shipAngle)) * cos(glm::radians(shipPitch));
-    shipDir.y = sin(glm::radians(shipPitch));
-    shipDir.z = cos(glm::radians(shipAngle)) * cos(glm::radians(shipPitch));
-    shipDir = glm::normalize(shipDir);
+    const glm::vec3 shipDir = shipForward(shipAngle, shipPitch);
 
     if (cameraMode == 1) { cameraPos = shipPos + glm::vec3(0, 0.5, 0) + shipDir * 2.0f; cameraTarget = cameraPos + shipDir; }
     else if (cameraMode == 2) { cameraPos = glm::vec3(0, 100, 10); cameraTarget = glm::vec3(0, 0, 0); cameraUp = glm::vec3(0, 0, -1); }
@@ -1633,16 +1636,17 @@ static Protocol::PlayerInput clientInput{};
 // 입력을 기록한 클라이언트 업데이트 번호다. 실제 시계 시간이 아니다.
 std::uint32_t clientTick = 0;
 
+static bool isValidPlayerInput(const Protocol::PlayerInput& input) {
+    return (input.buttons & ~Protocol::INPUT_MASK) == 0 &&
+        std::isfinite(input.yaw) && std::isfinite(input.pitch) &&
+        input.yaw >= 0.0f && input.yaw < 360.0f &&
+        input.pitch >= -89.0f && input.pitch <= 89.0f;
+}
+
 // 현재 입력을 전송 규칙에 맞는 14바이트 본문으로 만든다.
 // 실제 소켓 송신은 공용 전송 모듈이 처리한다.
 bool sendInput() {
-    // 허용하지 않은 버튼 비트, 유효하지 않은 실수, 범위를 벗어난 각도는 거절한다.
-    if ((clientInput.buttons & ~Protocol::INPUT_MASK) != 0 ||
-        !std::isfinite(clientInput.yaw) || !std::isfinite(clientInput.pitch) ||
-        clientInput.yaw < 0.0f || clientInput.yaw >= 360.0f ||
-        clientInput.pitch < -89.0f || clientInput.pitch > 89.0f) {
-        return false;
-    }
+    if (!isValidPlayerInput(clientInput)) return false;
 
     // 실수의 값이 아닌 비트 모양을 복사하려면 두 자료형이 모두 4바이트여야 한다.
     static_assert(sizeof(float) == sizeof(std::uint32_t), "Expected 32-bit float");
@@ -2297,11 +2301,31 @@ void runClientTick() {
     ++clientTick;
 }
 
-void runHostTick() {
+static void applyGuestShipInput(const Protocol::PlayerInput& input) {
+    const auto pressed = [&input](Protocol::InputBits button) {
+        return (input.buttons & static_cast<std::uint16_t>(button)) != 0;
+    };
+    const int forward = pressed(Protocol::InputBits::Forward) - pressed(Protocol::InputBits::Backward);
+    const int strafe = pressed(Protocol::InputBits::Right) - pressed(Protocol::InputBits::Left);
+
+    hostGuestShip.yaw = input.yaw;
+    hostGuestShip.pitch = input.pitch;
+    glm::vec3 position{ hostGuestShip.position.x, hostGuestShip.position.y, hostGuestShip.position.z };
+    updateMovement(position, input.yaw, input.pitch, forward, strafe, pressed(Protocol::InputBits::Boost));
+    hostGuestShip.position = { position.x, position.y, position.z };
+
+    if (pressed(Protocol::InputBits::Fire)) {
+        spawnMissile(guestMissileLauncher, position, shipForward(input.yaw, input.pitch));
+    }
+}
+
+// 입력의 플레이어 ID는 전송 모듈이 소켓의 승인된 세션에서 확인해 넘긴다.
+void runHostTick(std::uint32_t inputPlayerId = 0, const Protocol::PlayerInput& guestInput = {}) {
     const auto guestId = hostingNetworkGame ? joinedHostPlayerId() : 0u;
     if (guestId != hostGuestShip.playerId) {
         hostGuestShip = initialShipState;
         hostGuestShip.playerId = guestId;
+        guestMissileLauncher = MissileLauncher{guestId};
     }
 
     ++worldTick;
@@ -2313,6 +2337,9 @@ void runHostTick() {
     const int forwardInput = keyState['w'] - keyState['s'];
     const int strafeInput = keyState['d'] - keyState['a'];
     updateMovement(shipPos, shipAngle, shipPitch, forwardInput, strafeInput, keyState['r']);
+    if (guestId != 0 && inputPlayerId == guestId && isValidPlayerInput(guestInput)) {
+        applyGuestShipInput(guestInput);
+    }
     updateGameLogic();
 
     // 한 틱은 16ms다. 남은 시간을 이월해 시뮬레이션 1초당 20회 발행한다.
