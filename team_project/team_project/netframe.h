@@ -3,6 +3,7 @@
 #include "Protocol.h"
 #include <vector>
 #include <deque>
+#include <chrono>
 
 // encodeFrame(): 메시지 타입, 순번, 본문을 받아 헤더를 붙인 전송 바이트 생성
 bool encodeFrame(
@@ -36,3 +37,7 @@ bool networkLoop(
     std::vector<char>& receiveBuffer,
     SendState& sendState,
     std::vector<DecodedFrame>& outFrames);
+
+bool checkTimeout(
+    std::chrono::steady_clock::time_point startedAt,
+    std::chrono::milliseconds timeout);

@@ -224,3 +224,13 @@ bool networkLoop(
 
     return true;
 }
+
+bool checkTimeout(
+    std::chrono::steady_clock::time_point startedAt,
+    std::chrono::milliseconds timeout)
+{
+    const auto now = std::chrono::steady_clock::now();
+    const auto elapsed = now - startedAt;
+
+    return elapsed >= timeout;
+}
