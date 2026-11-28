@@ -29,3 +29,10 @@ struct SendState {
 
 bool flushSendQueue(SOCKET socket, SendState& state);
 
+bool networkLoop(
+    SOCKET socket,
+    bool readable,
+    bool writable,
+    std::vector<char>& receiveBuffer,
+    SendState& sendState,
+    std::vector<DecodedFrame>& outFrames);

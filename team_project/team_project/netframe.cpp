@@ -186,3 +186,41 @@ bool flushSendQueue(SOCKET socket, SendState& state)
 
     return true;
 }
+
+bool networkLoop(
+    SOCKET socket,
+    bool readable,
+    bool writable,
+    std::vector<char>& receiveBuffer,
+    SendState& sendState,
+    std::vector<DecodedFrame>& outFrames)
+{
+    // 이번 호출에서 완성된 프레임만 전달한다.
+    outFrames.clear();
+
+    if (readable) {
+        char buffer[256];
+        const int received = recv(socket, buffer, sizeof(buffer), 0);
+
+        if (received > 0) {
+            receiveBuffer.insert(
+                receiveBuffer.end(), buffer, buffer + received);
+
+            if (!decodeFrames(receiveBuffer, outFrames))
+                return false;
+        }
+        else if (received == 0) {
+            return false;  // 상대가 연결을 종료함
+        }
+        else if (WSAGetLastError() != WSAEWOULDBLOCK) {
+            return false;  // 복구할 수 없는 수신 오류
+        }
+    }
+
+    if (writable) {
+        if (!flushSendQueue(socket, sendState))
+            return false;
+    }
+
+    return true;
+}
